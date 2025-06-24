@@ -1102,7 +1102,7 @@ def server(input, output, session: Session):
                 data = categorize_age(data)
                 
                 # Identify GPS columns in the data
-                gps_cols = patietn_health-gps_location
+                gps_cols = identify_gps_columns(data)
                 gps_columns_value.set(gps_cols)
                 logging.info(f"Identified GPS columns: {gps_cols}")
                 
@@ -1664,7 +1664,6 @@ def server(input, output, session: Session):
                                 {"class": "card-body"},
                                 output_widget("location_map"),
                                 ui.output_ui("gps_info_box")  # New: Add GPS info display
-                                gps_columns = gps_columns_value.get() or []
                             )
                         )
                     )
@@ -1772,7 +1771,6 @@ def server(input, output, session: Session):
                     p.set(i, message="Loading", detail="Retrieving projects...")
                     await asyncio.sleep(0.2)
             
-         is_loading_data.set(True)
         try:
             odk_api.set_credentials(email, password)
             if odk_api.authenticate():
