@@ -123,7 +123,7 @@ class ODKCentralAPI:
             logging.error(f"Failed to fetch forms: {e}")
             return []
 
-    def fetch_submissions(self, project_id=None, form_id=None, force_refresh=False,):
+    def fetch_submissions(self, project_id=None, form_id=None, force_refresh=True,):
         # Use cached submissions if available, not expired, and not forced to refresh
         cache_key = f'submissions_{project_id}_{form_id}'
         if not force_refresh and cache_key in self._submissions_cache and time.time() < self._cache_expiry.get(cache_key, 0):
@@ -225,6 +225,35 @@ app_ui = ui.page_bootstrap(
                 } else {
                     $(this).hide();
                 }
+            });
+        });
+        
+        // Add this to your JavaScript section to ensure proper loading indicator behavior
+        document.addEventListener('DOMContentLoaded', function() {
+            // Hide loading indicator on initial load
+            const loadingIndicator = document.getElementById('loading-indicator');
+            const loadingText = document.getElementById('loading-text');
+            if (loadingIndicator) loadingIndicator.style.display = 'none';
+            if (loadingText) loadingText.style.display = 'none';
+            
+            // Define custom message handlers
+            Shiny.addCustomMessageHandler('showLoading', function(message) {
+                console.log('Show loading:', message);
+                const loadingIndicator = document.getElementById('loading-indicator');
+                const loadingText = document.getElementById('loading-text');
+                if (loadingIndicator) loadingIndicator.style.display = 'block';
+                if (loadingText) {
+                    loadingText.style.display = 'block';
+                    loadingText.textContent = message || 'Loading data, please wait...';
+                }
+            });
+            
+            Shiny.addCustomMessageHandler('hideLoading', function(message) {
+                console.log('Hide loading');
+                const loadingIndicator = document.getElementById('loading-indicator');
+                const loadingText = document.getElementById('loading-text');
+                if (loadingIndicator) loadingIndicator.style.display = 'none';
+                if (loadingText) loadingText.style.display = 'none';
             });
         });
         
@@ -873,10 +902,6 @@ app_ui = ui.page_bootstrap(
         )
     ),
     
-    # Improved loading indicator
-    ui.div({"id": "loading-indicator"}),
-    ui.div({"id": "loading-text"}, "Loading data, please wait..."),
-    
     ui.output_ui("main_ui"),
     
     # Version info with updated timestamp and username
@@ -965,33 +990,34 @@ def server(input, output, session: Session):
             df.loc[conditions[2], "age_group"] = choices[2]
         return df
       
-    # OPTIMIZED to use cached data when possible
-    async def load_data_from_api(project_id, form_id, force_refresh=False):
-        """Centralized function to load data from API with improved performance"""
-        if not project_id or not form_id:
-            return pd.DataFrame(), "Missing project or form ID"
-            
-        is_loading_data.set(True)
-        show_loading("Fetching data from ODK Central...")
-        try:
-            data = odk_api.fetch_submissions(project_id, form_id, force_refresh)
-            if isinstance(data, pd.DataFrame) and not data.empty:
-                show_loading("Processing data...")
-                await asyncio.sleep(0.1)  # Give UI time to update
+        # OPTIMIZED to use cached data when possible
+        async def load_data_from_api(project_id, form_id, force_refresh=False):
+            """Centralized function to load data from API with improved performance"""
+            if not project_id or not form_id:
+                hide_loading()  # Make sure to hide loading on early return
+                return pd.DataFrame(), "Missing project or form ID"
                 
-                data = map_sample_labels(data)
-                data = map_a04_labels(data)
-                data = categorize_age(data)
-                message = f"Loaded {len(data)} submissions."
-                return data, message
-            else:
-                return pd.DataFrame({"Error": ["No data returned from API"]}), "No data returned from API"
-        except Exception as e:
-            logging.error(f"Error loading data: {str(e)}")
-            return pd.DataFrame({"Error": [f"Error: {str(e)}"]}), f"Error: {str(e)}"
-        finally:
-            is_loading_data.set(False)
-            hide_loading()
+            is_loading_data.set(True)
+            show_loading("Fetching data from ODK Central...")
+            try:
+                data = odk_api.fetch_submissions(project_id, form_id, force_refresh)
+                if isinstance(data, pd.DataFrame) and not data.empty:
+                    show_loading("Processing data...")
+                    await asyncio.sleep(0.1)  # Give UI time to update
+                    
+                    data = map_sample_labels(data)
+                    data = map_a04_labels(data)
+                    data = categorize_age(data)
+                    message = f"Loaded {len(data)} submissions."
+                    return data, message
+                else:
+                    return pd.DataFrame({"Error": ["No data returned from API"]}), "No data returned from API"
+            except Exception as e:
+                logging.error(f"Error loading data: {str(e)}")
+                return pd.DataFrame({"Error": [f"Error: {str(e)}"]}), f"Error: {str(e)}"
+            finally:
+                is_loading_data.set(False)
+                hide_loading()  # Always hide loading indicator when function completes
 
     def identify_gps_columns(df):
       if df is None or not isinstance(df, pd.DataFrame):
@@ -1118,1610 +1144,1608 @@ def server(input, output, session: Session):
         finally:
             is_loading_data.set(False)
 
-    @reactive.Effect
-    @reactive.event(input.restoreTokenFromJS)
-    async def restore_token_from_js():
-            # Skip if no credentials data
-            if not input.restoreTokenFromJS():
-                return
-                
-            logging.info("Attempting to restore token from session storage")
-            creds = input.restoreTokenFromJS()
-            if not creds or not isinstance(creds, dict):
-                logging.warning("No credentials found in session storage")
-                logged_in_value.set(False)  # Ensure logged_in is False
-                session.send_custom_message("clearToken", {})
-                return
-                
-            token = creds.get("token", "")
-            if not token:
-                logging.warning("Empty token in session storage")
-                logged_in_value.set(False)  # Ensure logged_in is False
-                session.send_custom_message("clearToken", {})
-                return
-                
-            show_loading("Restoring session...")
-            try:
-                odk_api.set_token(token)
-                projects = odk_api.fetch_projects()
-                
-                if not projects:
-                    logged_in_value.set(False)
-                    odk_token_value.set(None)
-                    login_message_value.set("Invalid or expired session token.")
-                    session.send_custom_message("clearToken", {})
-                    logging.warning("Token validation failed - no projects returned")
-                    hide_loading()
-                    return
-                
-            # Token is valid, complete login process
-            logged_in_value.set(True)
-            odk_token_value.set(token)
-            odk_email_value.set("Session Restored")
-            login_message_value.set("")
-            
-            # Setup initial data
-            project_choices = {str(p['id']): p['name'] for p in projects}
-            project_choices_value.set(project_choices)
-            
-            project_id = list(project_choices.keys())[0] if project_choices else None
-            selected_project_id_value.set(project_id)
-            
-            forms = odk_api.fetch_forms(project_id) if project_id else []
-            form_choices = {f['xmlFormId']: f['name'] for f in forms}
-            form_choices_value.set(form_choices)
-            
-            form_id = list(form_choices.keys())[0] if form_choices else None
-            selected_form_id_value.set(form_id)
-            
-            odk_api.project_id = project_id
-            odk_api.form_id = form_id
-            
-            # Load data using the centralized function
-            data, message = load_data_from_api(project_id, form_id)
-            odk_data_value.set(data)
-            data_message_value.set(message)
-            
-            log_audit_event("Token restore/login", "Session Restored")
-            
-            logging.info(f"Successfully restored session with token")
-        except Exception as e:
-            logged_in_value.set(False)
-            odk_token_value.set(None)
-            logging.error(f"Token restore failed: {e}")
-            login_message_value.set("Session restoration failed.")
-            session.send_custom_message("clearToken", {})
-
-    @output
-    @render.ui
-    def main_ui():
-        data = odk_data_value.get()
-        column_selector = None
-        row_selector = None
-        sample_filter = None
-        school_filter = None
-
-        if not logged_in_value.get():
-            return ui.div(
-                {"class": "container-fluid"},
-                ui.div(
-                    {"class": "row justify-content-center"},
-                    ui.div(
-                        {"class": "col-md-6 col-lg-4"},
-                        ui.div(
-                            {"class": "login-container-custom animate__animated animate__fadeInUp"},
-                            # Enhanced Login Header
-                            ui.div(
-                                {"class": "login-header"},
-                                ui.tags.i({"class": "fas fa-shield-alt fa-2x mb-3"}),
-                                ui.h3("Secure Login", {"class": "mb-0 fw-bold"})
-                            ),
-                            # Enhanced Login Body
-                            ui.div(
-                                {"class": "login-body"},
-                                ui.div(
-                                    {"class": "mb-3"},
-                                    ui.tags.label(
-                                        [
-                                            ui.tags.i({"class": "fas fa-user me-2"}),
-                                            "Username"
-                                        ],
-                                        {"for": "odk_email"}
-                                    ),
-                                    ui.input_text("odk_email", None, placeholder="Enter your username")
-                                ),
-                                ui.div(
-                                    {"class": "mb-4"},
-                                    ui.tags.label(
-                                        [
-                                            ui.tags.i({"class": "fas fa-lock me-2"}),
-                                            "Password"
-                                        ],
-                                        {"for": "odk_pass"}
-                                    ),
-                                    ui.input_password("odk_pass", None, placeholder="Enter your password")
-                                ),
-                                ui.input_action_button(
-                                    "login", 
-                                    ui.tags.span(
-                                        ui.tags.i({"class": "fas fa-sign-in-alt me-2"}),
-                                        "Sign In"
-                                    )
-                                ),
-                                ui.div(login_message_value.get(), {"class": "error-message"}) if login_message_value.get() else ""
-                            )
-                        )
-                    )
-                )
-            )
-        else:
-            project_choices = project_choices_value.get()
-            form_choices = form_choices_value.get()
-            selected_project_id = selected_project_id_value.get()
-            selected_form_id = selected_form_id_value.get()
-            
-            # Build selectors
-            project_selector = None
-            form_selector = None
-            if project_choices:
-                project_selector = ui.input_select(
-                    "selected_project",
-                    "Select Project",
-                    choices=project_choices,
-                    selected=selected_project_id
-                )
-            if form_choices:
-                form_selector = ui.input_select(
-                    "selected_form",
-                    "Select Form",
-                    choices=form_choices,
-                    selected=selected_form_id
-                )
-            
-            if not data.empty:
-                data = map_sample_labels(data)
-                data = map_a04_labels(data)
-                data = categorize_age(data)
-                if "sample" in data.columns:
-                    values = sorted(data["sample"].dropna().astype(str).unique().tolist())
-                    sample_filter = ui.input_select(
-                        "sample_filter",
-                        "Filter by Sample",
-                        ["All"] + values,
-                        selected="All"
-                    )
-                if "school" in data.columns:
-                    values = sorted(data["school"].dropna().astype(str).unique().tolist())
-                    school_filter = ui.input_select(
-                        "school_filter",
-                        "Filter by School",
-                        ["All"] + values,
-                        selected="All"
-                    )
-                columns = list(data.columns)
-                total_columns = len(columns)
-                
-                # FIXED DROPDOWN COLUMN SELECTOR WITH SEARCH AND SELECT ALL/NONE FUNCTIONALITY
-                column_selector = ui.div(
-                    {"class": "form-group", "id": "submission-field-dropdown"},
-                    ui.tags.label("Select Variables", {"class": "form-label"}),
-                    
-                    # Bootstrap 5 Dropdown
-                    ui.tags.div(
-                        {"class": "dropdown"},
-                        ui.tags.button(
-                            [
-                                ui.tags.span(f"0 of {total_columns}", id="dropdown-counter"),
-                                ui.tags.span({"class": "ms-1"}, ui.tags.i({"class": "fas fa-chevron-down"}))
-                            ],
-                            id="submission-field-dropdown-toggle",
-                            class_="btn dropdown-toggle d-flex justify-content-between align-items-center w-100",
-                            type="button",
-                            **{"data-bs-toggle": "dropdown", "aria-expanded": "false"}
-                        ),
-                        ui.tags.div(
-                            {"class": "dropdown-menu w-100 p-0", "id": "column-dropdown-list"},
-                            # Search input at top with functionality
-                            ui.tags.div(
-                                {"class": "dropdown-search px-2 py-2 border-bottom"},
-                                ui.tags.input(
-                                    {
-                                        "type": "text", 
-                                        "class": "form-control form-control-sm", 
-                                        "placeholder": "Search columns...", 
-                                        "id": "column-search-input",
-                                        "oninput": """
-                                            const searchTerm = this.value.toLowerCase();
-                                            document.querySelectorAll('.column-option').forEach(function(option) {
-                                                const label = option.querySelector('.form-check-label').textContent.toLowerCase();
-                                                if (label.includes(searchTerm)) {
-                                                    option.style.display = '';
-                                                } else {
-                                                    option.style.display = 'none';
-                                                }
-                                            });
-                                        """
-                                    }
-                                )
-                            ),
-                            # Select All / None links with onclick handlers
-                            ui.tags.div(
-                                {"class": "select-options px-2 py-2 border-bottom"},
-                                ui.tags.a(
-                                    "Select All", 
-                                    {
-                                        "href": "#", 
-                                        "class": "select-all-link me-2",
-                                        "onclick": """
-                                            document.querySelectorAll('.column-checkbox').forEach(function(checkbox) {
-                                                checkbox.checked = true;
-                                            });
-                                            updateDropdownCounter();
-                                            return false;
-                                        """
-                                    }
-                                ),
-                                " / ",
-                                ui.tags.a(
-                                    "None", 
-                                    {
-                                        "href": "#", 
-                                        "class": "select-none-link ms-2",
-                                        "onclick": """
-                                            document.querySelectorAll('.column-checkbox').forEach(function(checkbox) {
-                                                checkbox.checked = false;
-                                            });
-                                            updateDropdownCounter();
-                                            return false;
-                                        """
-                                    }
-                                )
-                            ),
-                            # Scrollable area with checkboxes
-                            ui.tags.div(
-                                {"class": "column-checkbox-list p-2", "style": "max-height: 300px; overflow-y: auto;"},
-                                *[
-                                    ui.tags.div(
-                                        {"class": "form-check column-option"},
-                                        ui.tags.input({
-                                            "type": "checkbox", 
-                                            "id": f"col_{i}", 
-                                            "class": "form-check-input column-checkbox",
-                                            "checked": "checked" if col in columns[:min(len(columns), 6)] else None,
-                                            "onchange": "updateDropdownCounter();"
-                                        }),
-                                        ui.tags.label(col, {"class": "form-check-label ms-2", "for": f"col_{i}"})
-                                    )
-                                    for i, col in enumerate(columns)
-                                ]
-                            )
-                        )
-                    ),
-                    
-                    # Add JavaScript for dropdown functionality
-                    ui.tags.script("""
-                    function updateDropdownCounter() {
-                        const totalCheckboxes = document.querySelectorAll('.column-checkbox').length;
-                        const checkedCheckboxes = document.querySelectorAll('.column-checkbox:checked').length;
-                        const counterElement = document.getElementById('dropdown-counter');
-                        
-                        if (counterElement) {
-                            counterElement.textContent = `${checkedCheckboxes} of ${totalCheckboxes}`;
-                        }
-                    }
-                
-                    // Initialize counter on page load
-                    document.addEventListener('DOMContentLoaded', function() {
-                        updateDropdownCounter();
-                        
-                        // Focus search input when dropdown is shown
-                        const dropdownToggle = document.getElementById('submission-field-dropdown-toggle');
-                        if (dropdownToggle) {
-                            dropdownToggle.addEventListener('click', function() {
-                                setTimeout(function() {
-                                    const searchInput = document.getElementById('column-search-input');
-                                    if (searchInput) {
-                                        searchInput.focus();
-                                    }
-                                }, 100);
-                            });
-                        }
-                        
-                        // Clear search when dropdown is hidden
-                        const dropdown = document.getElementById('column-dropdown-list');
-                        if (dropdown) {
-                            dropdown.addEventListener('hidden.bs.dropdown', function() {
-                                const searchInput = document.getElementById('column-search-input');
-                                if (searchInput) {
-                                    searchInput.value = '';
-                                    // Reset visibility of all options
-                                    document.querySelectorAll('.column-option').forEach(function(option) {
-                                        option.style.display = '';
-                                    });
-                                }
-                            });
-                        }
-                    });
-                    """)
-                )
-                
-                row_selector = ui.input_select(
-                    "n_rows",
-                    "Row page",
-                    choices=[1, 5, 10, 20, 50, 100],
-                    selected=5
-                )
-            
-            # Loading indicator
-            loading_indicator = ui.div(
-                {"class": "alert alert-warning mb-3", "id": "loading-indicator"},
-                ui.tags.i({"class": "fas fa-sync fa-spin me-2"}),
-                "Loading data, please wait..."
-            ) if is_loading_data.get() else ""
-            
-            # Download button is available for all users
-            download_button = ui.download_button(
-                "download_data", 
-                ui.tags.span(
-                    ui.tags.i({"class": "fas fa-download me-2"}),
-                    "Download Data"
-                )
-            )
-            
-            # Added force refresh button
-            refresh_button = ui.input_action_button(
-                "force_refresh", 
-                ui.tags.span(
-                    ui.tags.i({"class": "fas fa-sync-alt me-2"}),
-                    "Force Refresh"
-                ),
-                class_="btn-warning ms-2"
-            )
-
-            return ui.div(
-                {"class": "container-fluid"},
-                # Logout button
-                ui.div(
-                    {"class": "logout-container"},
-                    ui.input_action_button(
-                        "logout", 
-                        ui.tags.span(
-                            ui.tags.i({"class": "fas fa-sign-out-alt me-2"}),
-                            "Logout"
-                        )
-                    ),
-                ),
-                
-                # User info with Bootstrap alert - Removed role display
-                ui.div(
-                    {"class": "alert alert-info d-flex align-items-center mt-3"},
-                    ui.tags.i({"class": "fas fa-user-fa-check-circle me-3"}),
-                    ui.tags.span(f"Logged in as {odk_email_value.get()}")
-                ),
-                
-                # Loading indicator
-                loading_indicator,
-                
-                # REARRANGED: Combined Controls section with project/form selection and column selection
-                ui.div(
-                    {"class": "controls-container"},
-                    ui.div(
-                        {"class": "row mb-3"},
-                        # Left side - Project & Form Selection
-                        ui.div(
-                            {"class": "col-md-6"},
-                            ui.h4("Project & Form Selection", {"class": "mb-3 text-primary"}),
-                            ui.div(
-                                {"class": "mb-3"},
-                                project_selector if project_selector else ""
-                            ),
-                            ui.div(
-                                {"class": "mb-3"},
-                                form_selector if form_selector else ""
-                            ),
-                            ui.input_action_button(
-                                "load_data", 
-                                ui.tags.span(
-                                    ui.tags.i({"class": "fas fa-sync-alt me-2"}),
-                                    "Refresh Data"
-                                )
-                            ),
-                            ui.output_text("data_message", {"class": "mt-2 text-muted"}),
-                        ),
-                        # Right side - Data Filters & Display Options
-                        ui.div(
-                            {"class": "col-md-6"},
-                            ui.h4("Select Variable", {"class": "mb-3 text-primary"}),
-                            # REARRANGED: Row with column selector and table display rows
-                            ui.div(
-                                {"class": "row mb-3"},
-                                # Column selector (left) - FIXED: Removed duplicate output
-                                ui.div(
-                                    {"class": "col-md-9"},
-                                    ui.tags.span({"id": "submission-filters"}),
-                                    column_selector if column_selector else ""
-                                ),
-                                # Table Display Rows (right)
-                                ui.div(
-                                    {"class": "col-md-3"},
-                                    row_selector if row_selector else ""
-                                )
-                            ),
-                            # Sample and School filters
-                            ui.div(
-                                {"class": "row"},
-                                ui.div(
-                                    {"class": "col-md-6"},
-                                    ui.div(sample_filter if sample_filter else "")
-                                ),
-                                ui.div(
-                                    {"class": "col-md-6"},
-                                    ui.div(school_filter if school_filter else "")
-                                )
-                            )
-                        )
-                    )
-                ),
-                
-                # Enhanced Download section
-                ui.div(
-                    {"class": "download-section"},
-                    ui.h5("Export Data", {"class": "mb-3 text-primary"}),
-                    download_button,
-                    ui.div(
-                        "Download data as CSV.", 
-                        {"class": "download-info"}
-                    )
-                ),
-                
-                # Age Group and Schools Charts side by side
-                ui.div(
-                    {"class": "row"},
-                    # Age Group Bar Chart (Left side)
-                    ui.div(
-                        {"class": "col-lg-6 col-md-12 mb-4"},
-                        ui.div(
-                            {"class": "card h-100"},
-                            ui.div(
-                                {"class": "card-header card-header-age d-flex align-items-center"},
-                                ui.tags.i({"class": "fas fa-user-clock me-2"}),
-                                ui.h5("Adolescent Age Group Distribution", {"class": "mb-0"})
-                            ),
-                            ui.div(
-                                {"class": "card-body"},
-                                output_widget("age_group_chart")
-                            )
-                        )
-                    ),
-                    # Schools Bar Chart (Right side)
-                    ui.div(
-                        {"class": "col-lg-6 col-md-12 mb-4"},
-                        ui.div(
-                            {"class": "card h-100"},
-                            ui.div(
-                                {"class": "card-header d-flex align-items-center"},
-                                ui.tags.i({"class": "fas fa-school me-2"}),
-                                ui.h5("Schools Interviewed", {"class": "mb-0"})
-                            ),
-                            ui.div(
-                                {"class": "card-body"},
-                                output_widget("school_count_chart")
-                            )
-                        )
-                    ),
-                ),
-                
-                # SEPARATE DONUT CHART CARDS - SIDE BY SIDE
-                ui.div(
-                    {"class": "row"},
-                    # Sample Distribution Donut Chart
-                    ui.div(
-                        {"class": "col-lg-6 col-md-12 mb-4"},
-                        ui.div(
-                            {"class": "card h-100"},
-                            ui.div(
-                                {"class": "card-header card-header-sample d-flex align-items-center"},
-                                ui.tags.i({"class": "fas fa-chart-pie me-2"}),
-                                ui.h5("Sample Distribution", {"class": "mb-0"})
-                            ),
-                            ui.div(
-                                {"class": "card-body donut-chart-container"},
-                                output_widget("sd02_donut_chart"),
-                            )
-                        ),
-                    ),
-                    # Sex Distribution Donut Chart  
-                    ui.div(
-                        {"class": "col-lg-6 col-md-12 mb-4"},
-                        ui.div(
-                            {"class": "card h-100"},
-                            ui.div(
-                                {"class": "card-header card-header-sex d-flex align-items-center"},
-                                ui.tags.i({"class": "fas fa-venus-mars me-2"}),
-                                ui.h5("Sex Distribution", {"class": "mb-0"})
-                            ),
-                            ui.div(
-                                {"class": "card-body donut-chart-container"},
-                                output_widget("a04_donut_chart"),
-                            )
-                        ),
-                    )
-                ),
-                
-                # NEW: Map Visualization Card with ipyleaflet
-                ui.div(
-                    {"class": "row"},
-                    ui.div(
-                        {"class": "col-12 mb-4"},
-                        ui.div(
-                            {"class": "card h-100 map-card"},
-                            ui.div(
-                                {"class": "card-header card-header-map d-flex align-items-center"},
-                                ui.tags.i({"class": "fas fa-map-marker-alt me-2"}),
-                                ui.h5("Geographical Distribution", {"class": "mb-0"})
-                            ),
-                            ui.div(
-                                {"class": "card-body"},
-                                output_widget("location_map"),
-                                ui.output_ui("gps_info_box")  # New: Add GPS info display
-                            )
-                        )
-                    )
-                ),
-                
-                # Main data table (MOVED TO BOTTOM)
-                ui.div(
-                    {"class": "card mb-4 data-table-card"},
-                    ui.div(
-                        {"class": "card-header d-flex align-items-center"},
-                        ui.tags.i({"class": "fas fa-table me-2"}),
-                        ui.h5("All Submissions", {"class": "mb-0"})
-                    ),
-                    ui.div(
-                        {"class": "card-body"},
-                        ui.output_data_frame("submission_table")
-                    )
-                )
-            )
-    
-    # Output for GPS information box overlay on map
-    @output
-    @render.ui
-    def gps_info_box():
-        gps_columns = gps_columns_value.get()
-        paired_coords = paired_coordinates_value.get()
-        
-        if not gps_columns:
-            return ui.div()
-        
-        # Create more detailed info about how GPS data is stored
-        column_info = []
-        for col in gps_columns:
-            if col in paired_coords:
-                column_info.append(f"{col} (paired with {paired_coords[col]})")
-            elif col in paired_coords.values():
-                # Skip longitude columns as they're mentioned with their latitude pair
-                continue
-            elif col == "patietn_health-gps_location":
-                column_info.append(f"{col} (base column)")
-            else:
-                column_info.append(col)
-            
-        return ui.div(
-            {"class": "gps-info-box"},
-            ui.div(
-                {"class": "gps-info-title"},
-                "GPS Data Available"
-            ),
-            ui.div(
-                f"Found GPS coordinates in {len(column_info)} format(s):",
-                ui.tags.ul(
-                    *[ui.tags.li(col_info) for col_info in column_info]
-                )
-            )
-        )
-    
-    # Download function
-    @output
-    @render.download(filename="Botnar_Adolescent_2.csv")
-    def download_data():
-        df = filtered_df()
-        selected = selected_columns()
-        from io import StringIO
-        buffer = StringIO()
-        if df is not None and not df.empty and selected:
-            cols_to_download = [col for col in selected if col in df.columns] if selected else list(df.columns)
-            df[cols_to_download].to_csv(buffer, index=False)
-            log_audit_event("Download Data", odk_email_value.get(), f"Cols: {cols_to_download}")
-        else:
-            buffer.write("No data loaded\n")
-        yield buffer.getvalue().encode("utf-8")
-
-    @reactive.Effect
-    @reactive.event(input.login)
-    def handle_login():
-        email = input.odk_email()
-        password = input.odk_pass()
-        if not email or not password:
-            login_message_value.set("Please enter both ODK Central email and password")
-            return
+      @reactive.Effect
+      @reactive.event(input.restoreTokenFromJS)
+      async def restore_token_from_js():
+              # Skip if no credentials data
+              if not input.restoreTokenFromJS():
+                  return
+                  
+              logging.info("Attempting to restore token from session storage")
+              creds = input.restoreTokenFromJS()
+              if not creds or not isinstance(creds, dict):
+                  logging.warning("No credentials found in session storage")
+                  logged_in_value.set(False)  # Ensure logged_in is False
+                  session.send_custom_message("clearToken", {})
+                  return
+                  
+              token = creds.get("token", "")
+              if not token:
+                  logging.warning("Empty token in session storage")
+                  logged_in_value.set(False)  # Ensure logged_in is False
+                  session.send_custom_message("clearToken", {})
+                  return
+                  
+              show_loading("Restoring session...")
+              try:
+                  odk_api.set_token(token)
+                  projects = odk_api.fetch_projects()
+                  
+                  if not projects:
+                      logged_in_value.set(False)
+                      odk_token_value.set(None)
+                      login_message_value.set("Invalid or expired session token.")
+                      session.send_custom_message("clearToken", {})
+                      logging.warning("Token validation failed - no projects returned")
+                      hide_loading()
+                      return
+                  
+              # Token is valid, complete login process
+              logged_in_value.set(True)
+              odk_token_value.set(token)
+              odk_email_value.set("Session Restored")
+              login_message_value.set("")
+              
+              # Setup initial data
+              project_choices = {str(p['id']): p['name'] for p in projects}
+              project_choices_value.set(project_choices)
+              
+              project_id = list(project_choices.keys())[0] if project_choices else None
+              selected_project_id_value.set(project_id)
+              
+              forms = odk_api.fetch_forms(project_id) if project_id else []
+              form_choices = {f['xmlFormId']: f['name'] for f in forms}
+              form_choices_value.set(form_choices)
+              
+              form_id = list(form_choices.keys())[0] if form_choices else None
+              selected_form_id_value.set(form_id)
+              
+              odk_api.project_id = project_id
+              odk_api.form_id = form_id
+              
+              # Load data using the centralized function
+              data, message = load_data_from_api(project_id, form_id)
+              odk_data_value.set(data)
+              data_message_value.set(message)
+              
+              log_audit_event("Token restore/login", "Session Restored")
+              
+              logging.info(f"Successfully restored session with token")
+          except Exception as e:
+              logged_in_value.set(False)
+              odk_token_value.set(None)
+              logging.error(f"Token restore failed: {e}")
+              login_message_value.set("Session restoration failed.")
+              session.send_custom_message("clearToken", {})
+  
+      @output
+      @render.ui
+      def main_ui():
+          data = odk_data_value.get()
+          column_selector = None
+          row_selector = None
+          sample_filter = None
+          school_filter = None
+  
+          if not logged_in_value.get():
+              return ui.div(
+                  {"class": "container-fluid"},
+                  ui.div(
+                      {"class": "row justify-content-center"},
+                      ui.div(
+                          {"class": "col-md-6 col-lg-4"},
+                          ui.div(
+                              {"class": "login-container-custom animate__animated animate__fadeInUp"},
+                              # Enhanced Login Header
+                              ui.div(
+                                  {"class": "login-header"},
+                                  ui.tags.i({"class": "fas fa-shield-alt fa-2x mb-3"}),
+                                  ui.h3("Secure Login", {"class": "mb-0 fw-bold"})
+                              ),
+                              # Enhanced Login Body
+                              ui.div(
+                                  {"class": "login-body"},
+                                  ui.div(
+                                      {"class": "mb-3"},
+                                      ui.tags.label(
+                                          [
+                                              ui.tags.i({"class": "fas fa-user me-2"}),
+                                              "Username"
+                                          ],
+                                          {"for": "odk_email"}
+                                      ),
+                                      ui.input_text("odk_email", None, placeholder="Enter your username")
+                                  ),
+                                  ui.div(
+                                      {"class": "mb-4"},
+                                      ui.tags.label(
+                                          [
+                                              ui.tags.i({"class": "fas fa-lock me-2"}),
+                                              "Password"
+                                          ],
+                                          {"for": "odk_pass"}
+                                      ),
+                                      ui.input_password("odk_pass", None, placeholder="Enter your password")
+                                  ),
+                                  ui.input_action_button(
+                                      "login", 
+                                      ui.tags.span(
+                                          ui.tags.i({"class": "fas fa-sign-in-alt me-2"}),
+                                          "Sign In"
+                                      )
+                                  ),
+                                  ui.div(login_message_value.get(), {"class": "error-message"}) if login_message_value.get() else ""
+                              )
+                          )
+                      )
+                  )
+              )
+          else:
+              project_choices = project_choices_value.get()
+              form_choices = form_choices_value.get()
+              selected_project_id = selected_project_id_value.get()
+              selected_form_id = selected_form_id_value.get()
+              
+              # Build selectors
+              project_selector = None
+              form_selector = None
+              if project_choices:
+                  project_selector = ui.input_select(
+                      "selected_project",
+                      "Select Project",
+                      choices=project_choices,
+                      selected=selected_project_id
+                  )
+              if form_choices:
+                  form_selector = ui.input_select(
+                      "selected_form",
+                      "Select Form",
+                      choices=form_choices,
+                      selected=selected_form_id
+                  )
+              
+              if not data.empty:
+                  data = map_sample_labels(data)
+                  data = map_a04_labels(data)
+                  data = categorize_age(data)
+                  if "sample" in data.columns:
+                      values = sorted(data["sample"].dropna().astype(str).unique().tolist())
+                      sample_filter = ui.input_select(
+                          "sample_filter",
+                          "Filter by Sample",
+                          ["All"] + values,
+                          selected="All"
+                      )
+                  if "school" in data.columns:
+                      values = sorted(data["school"].dropna().astype(str).unique().tolist())
+                      school_filter = ui.input_select(
+                          "school_filter",
+                          "Filter by School",
+                          ["All"] + values,
+                          selected="All"
+                      )
+                  columns = list(data.columns)
+                  total_columns = len(columns)
+                  
+                  # FIXED DROPDOWN COLUMN SELECTOR WITH SEARCH AND SELECT ALL/NONE FUNCTIONALITY
+                  column_selector = ui.div(
+                      {"class": "form-group", "id": "submission-field-dropdown"},
+                      ui.tags.label("Select Variables", {"class": "form-label"}),
+                      
+                      # Bootstrap 5 Dropdown
+                      ui.tags.div(
+                          {"class": "dropdown"},
+                          ui.tags.button(
+                              [
+                                  ui.tags.span(f"0 of {total_columns}", id="dropdown-counter"),
+                                  ui.tags.span({"class": "ms-1"}, ui.tags.i({"class": "fas fa-chevron-down"}))
+                              ],
+                              id="submission-field-dropdown-toggle",
+                              class_="btn dropdown-toggle d-flex justify-content-between align-items-center w-100",
+                              type="button",
+                              **{"data-bs-toggle": "dropdown", "aria-expanded": "false"}
+                          ),
+                          ui.tags.div(
+                              {"class": "dropdown-menu w-100 p-0", "id": "column-dropdown-list"},
+                              # Search input at top with functionality
+                              ui.tags.div(
+                                  {"class": "dropdown-search px-2 py-2 border-bottom"},
+                                  ui.tags.input(
+                                      {
+                                          "type": "text", 
+                                          "class": "form-control form-control-sm", 
+                                          "placeholder": "Search columns...", 
+                                          "id": "column-search-input",
+                                          "oninput": """
+                                              const searchTerm = this.value.toLowerCase();
+                                              document.querySelectorAll('.column-option').forEach(function(option) {
+                                                  const label = option.querySelector('.form-check-label').textContent.toLowerCase();
+                                                  if (label.includes(searchTerm)) {
+                                                      option.style.display = '';
+                                                  } else {
+                                                      option.style.display = 'none';
+                                                  }
+                                              });
+                                          """
+                                      }
+                                  )
+                              ),
+                              # Select All / None links with onclick handlers
+                              ui.tags.div(
+                                  {"class": "select-options px-2 py-2 border-bottom"},
+                                  ui.tags.a(
+                                      "Select All", 
+                                      {
+                                          "href": "#", 
+                                          "class": "select-all-link me-2",
+                                          "onclick": """
+                                              document.querySelectorAll('.column-checkbox').forEach(function(checkbox) {
+                                                  checkbox.checked = true;
+                                              });
+                                              updateDropdownCounter();
+                                              return false;
+                                          """
+                                      }
+                                  ),
+                                  ui.tags.a(
+                                      "None", 
+                                      {
+                                          "href": "#", 
+                                          "class": "select-none-link ms-2",
+                                          "onclick": """
+                                              document.querySelectorAll('.column-checkbox').forEach(function(checkbox) {
+                                                  checkbox.checked = false;
+                                              });
+                                              updateDropdownCounter();
+                                              return false;
+                                          """
+                                      }
+                                  )
+                              ),
+                              # Scrollable area with checkboxes
+                              ui.tags.div(
+                                  {"class": "column-checkbox-list p-2", "style": "max-height: 300px; overflow-y: auto;"},
+                                  *[
+                                      ui.tags.div(
+                                          {"class": "form-check column-option"},
+                                          ui.tags.input({
+                                              "type": "checkbox", 
+                                              "id": f"col_{i}", 
+                                              "class": "form-check-input column-checkbox",
+                                              "checked": "checked" if col in columns[:min(len(columns), 6)] else None,
+                                              "onchange": "updateDropdownCounter();"
+                                          }),
+                                          ui.tags.label(col, {"class": "form-check-label ms-2", "for": f"col_{i}"})
+                                      )
+                                      for i, col in enumerate(columns)
+                                  ]
+                              )
+                          )
+                      ),
+                      
+                      # Add JavaScript for dropdown functionality
+                      ui.tags.script("""
+                      function updateDropdownCounter() {
+                          const totalCheckboxes = document.querySelectorAll('.column-checkbox').length;
+                          const checkedCheckboxes = document.querySelectorAll('.column-checkbox:checked').length;
+                          const counterElement = document.getElementById('dropdown-counter');
+                          
+                          if (counterElement) {
+                              counterElement.textContent = `${checkedCheckboxes} of ${totalCheckboxes}`;
+                          }
+                      }
+                  
+                      // Initialize counter on page load
+                      document.addEventListener('DOMContentLoaded', function() {
+                          updateDropdownCounter();
+                          
+                          // Focus search input when dropdown is shown
+                          const dropdownToggle = document.getElementById('submission-field-dropdown-toggle');
+                          if (dropdownToggle) {
+                              dropdownToggle.addEventListener('click', function() {
+                                  setTimeout(function() {
+                                      const searchInput = document.getElementById('column-search-input');
+                                      if (searchInput) {
+                                          searchInput.focus();
+                                      }
+                                  }, 100);
+                              });
+                          }
+                          
+                          // Clear search when dropdown is hidden
+                          const dropdown = document.getElementById('column-dropdown-list');
+                          if (dropdown) {
+                              dropdown.addEventListener('hidden.bs.dropdown', function() {
+                                  const searchInput = document.getElementById('column-search-input');
+                                  if (searchInput) {
+                                      searchInput.value = '';
+                                      // Reset visibility of all options
+                                      document.querySelectorAll('.column-option').forEach(function(option) {
+                                          option.style.display = '';
+                                      });
+                                  }
+                              });
+                          }
+                      });
+                      """)
+                  )
+                  
+                  row_selector = ui.input_select(
+                      "n_rows",
+                      "Row page",
+                      choices=[1, 5, 10, 20, 50, 100],
+                      selected=5
+                  )
+              
+              # Loading indicator
+              loading_indicator = ui.div(
+                  {"class": "alert alert-warning mb-3", "id": "loading-indicator"},
+                  ui.tags.i({"class": "fas fa-sync fa-spin me-2"}),
+                  "Loading data, please wait..."
+              ) if is_loading_data.get() else ""
+              
+              # Download button is available for all users
+              download_button = ui.download_button(
+                  "download_data", 
+                  ui.tags.span(
+                      ui.tags.i({"class": "fas fa-download me-2"}),
+                      "Download Data"
+                  )
+              )
+              
+              # Added force refresh button
+              refresh_button = ui.input_action_button(
+                  "force_refresh", 
+                  ui.tags.span(
+                      ui.tags.i({"class": "fas fa-sync-alt me-2"}),
+                      "Force Refresh"
+                  ),
+                  class_="btn-warning ms-2"
+              )
+  
+              return ui.div(
+                  {"class": "container-fluid"},
+                  # Logout button
+                  ui.div(
+                      {"class": "logout-container"},
+                      ui.input_action_button(
+                          "logout", 
+                          ui.tags.span(
+                              ui.tags.i({"class": "fas fa-sign-out-alt me-2"}),
+                              "Logout"
+                          )
+                      ),
+                  ),
+                  
+                  # User info with Bootstrap alert - Removed role display
+                  ui.div(
+                      {"class": "alert alert-info d-flex align-items-center mt-3"},
+                      ui.tags.i({"class": "fas fa-user-fa-check-circle me-3"}),
+                      ui.tags.span(f"Logged in as {odk_email_value.get()}")
+                  ),
+                  
+                  # Loading indicator
+                  loading_indicator,
+                  
+                  # REARRANGED: Combined Controls section with project/form selection and column selection
+                  ui.div(
+                      {"class": "controls-container"},
+                      ui.div(
+                          {"class": "row mb-3"},
+                          # Left side - Project & Form Selection
+                          ui.div(
+                              {"class": "col-md-6"},
+                              ui.h4("Project & Form Selection", {"class": "mb-3 text-primary"}),
+                              ui.div(
+                                  {"class": "mb-3"},
+                                  project_selector if project_selector else ""
+                              ),
+                              ui.div(
+                                  {"class": "mb-3"},
+                                  form_selector if form_selector else ""
+                              ),
+                              ui.input_action_button(
+                                  "load_data", 
+                                  ui.tags.span(
+                                      ui.tags.i({"class": "fas fa-sync-alt me-2"}),
+                                      "Refresh Data"
+                                  )
+                              ),
+                              ui.output_text("data_message", {"class": "mt-2 text-muted"}),
+                          ),
+                          # Right side - Data Filters & Display Options
+                          ui.div(
+                              {"class": "col-md-6"},
+                              ui.h4("Select Variable", {"class": "mb-3 text-primary"}),
+                              # REARRANGED: Row with column selector and table display rows
+                              ui.div(
+                                  {"class": "row mb-3"},
+                                  # Column selector (left) - FIXED: Removed duplicate output
+                                  ui.div(
+                                      {"class": "col-md-9"},
+                                      ui.tags.span({"id": "submission-filters"}),
+                                      column_selector if column_selector else ""
+                                  ),
+                                  # Table Display Rows (right)
+                                  ui.div(
+                                      {"class": "col-md-3"},
+                                      row_selector if row_selector else ""
+                                  )
+                              ),
+                              # Sample and School filters
+                              ui.div(
+                                  {"class": "row"},
+                                  ui.div(
+                                      {"class": "col-md-6"},
+                                      ui.div(sample_filter if sample_filter else "")
+                                  ),
+                                  ui.div(
+                                      {"class": "col-md-6"},
+                                      ui.div(school_filter if school_filter else "")
+                                  )
+                              )
+                          )
+                      )
+                  ),
+                  
+                  # Enhanced Download section
+                  ui.div(
+                      {"class": "download-section"},
+                      ui.h5("Export Data", {"class": "mb-3 text-primary"}),
+                      download_button,
+                      ui.div(
+                          "Download data as CSV.", 
+                          {"class": "download-info"}
+                      )
+                  ),
+                  
+                  # Age Group and Schools Charts side by side
+                  ui.div(
+                      {"class": "row"},
+                      # Age Group Bar Chart (Left side)
+                      ui.div(
+                          {"class": "col-lg-6 col-md-12 mb-4"},
+                          ui.div(
+                              {"class": "card h-100"},
+                              ui.div(
+                                  {"class": "card-header card-header-age d-flex align-items-center"},
+                                  ui.tags.i({"class": "fas fa-user-clock me-2"}),
+                                  ui.h5("Adolescent Age Group Distribution", {"class": "mb-0"})
+                              ),
+                              ui.div(
+                                  {"class": "card-body"},
+                                  output_widget("age_group_chart")
+                              )
+                          )
+                      ),
+                      # Schools Bar Chart (Right side)
+                      ui.div(
+                          {"class": "col-lg-6 col-md-12 mb-4"},
+                          ui.div(
+                              {"class": "card h-100"},
+                              ui.div(
+                                  {"class": "card-header d-flex align-items-center"},
+                                  ui.tags.i({"class": "fas fa-school me-2"}),
+                                  ui.h5("Schools Interviewed", {"class": "mb-0"})
+                              ),
+                              ui.div(
+                                  {"class": "card-body"},
+                                  output_widget("school_count_chart")
+                              )
+                          )
+                      ),
+                  ),
+                  
+                  # SEPARATE DONUT CHART CARDS - SIDE BY SIDE
+                  ui.div(
+                      {"class": "row"},
+                      # Sample Distribution Donut Chart
+                      ui.div(
+                          {"class": "col-lg-6 col-md-12 mb-4"},
+                          ui.div(
+                              {"class": "card h-100"},
+                              ui.div(
+                                  {"class": "card-header card-header-sample d-flex align-items-center"},
+                                  ui.tags.i({"class": "fas fa-chart-pie me-2"}),
+                                  ui.h5("Sample Distribution", {"class": "mb-0"})
+                              ),
+                              ui.div(
+                                  {"class": "card-body donut-chart-container"},
+                                  output_widget("sd02_donut_chart"),
+                              )
+                          ),
+                      ),
+                      # Sex Distribution Donut Chart  
+                      ui.div(
+                          {"class": "col-lg-6 col-md-12 mb-4"},
+                          ui.div(
+                              {"class": "card h-100"},
+                              ui.div(
+                                  {"class": "card-header card-header-sex d-flex align-items-center"},
+                                  ui.tags.i({"class": "fas fa-venus-mars me-2"}),
+                                  ui.h5("Sex Distribution", {"class": "mb-0"})
+                              ),
+                              ui.div(
+                                  {"class": "card-body donut-chart-container"},
+                                  output_widget("a04_donut_chart"),
+                              )
+                          ),
+                      )
+                  ),
+                  
+                  # NEW: Map Visualization Card with ipyleaflet
+                  ui.div(
+                      {"class": "row"},
+                      ui.div(
+                          {"class": "col-12 mb-4"},
+                          ui.div(
+                              {"class": "card h-100 map-card"},
+                              ui.div(
+                                  {"class": "card-header card-header-map d-flex align-items-center"},
+                                  ui.tags.i({"class": "fas fa-map-marker-alt me-2"}),
+                                  ui.h5("Geographical Distribution", {"class": "mb-0"})
+                              ),
+                              ui.div(
+                                  {"class": "card-body"},
+                                  output_widget("location_map"),
+                                  ui.output_ui("gps_info_box")  # New: Add GPS info display
+                              )
+                          )
+                      )
+                  ),
+                  
+                  # Main data table (MOVED TO BOTTOM)
+                  ui.div(
+                      {"class": "card mb-4 data-table-card"},
+                      ui.div(
+                          {"class": "card-header d-flex align-items-center"},
+                          ui.tags.i({"class": "fas fa-table me-2"}),
+                          ui.h5("All Submissions", {"class": "mb-0"})
+                      ),
+                      ui.div(
+                          {"class": "card-body"},
+                          ui.output_data_frame("submission_table")
+                      )
+                  )
+              )
+      
+      # Output for GPS information box overlay on map
+      @output
+      @render.ui
+      def gps_info_box():
+          gps_columns = gps_columns_value.get()
+          paired_coords = paired_coordinates_value.get()
           
-        show_loading("Authenticating...")
-        is_loading_data.set(True)
-        try:
-            # Show progress bar during login
-            with ui.Progress(min=1, max=10) as p:
-                p.set(message="Authenticating...", detail="Connecting to server...")
-                
-                # Set credentials
-                odk_api.set_credentials(email, password)
-                
-                # Progress step 1-3: Authentication
-                for i in range(1, 4):
-                    p.set(i, message="Authenticating", detail="Verifying credentials...")
-                    await asyncio.sleep(0.2)
-                    
-                # Authenticate
-                if not odk_api.authenticate():
-                    login_message_value.set("ODK Central authentication failed")
-                    return
-                    
-                # Progress step 4-6: Loading projects
-                for i in range(4, 7):
-                    p.set(i, message="Loading", detail="Retrieving projects...")
-                    await asyncio.sleep(0.2)
-            
-        try:
-            odk_api.set_credentials(email, password)
-            if odk_api.authenticate():
-                logged_in_value.set(True)
-                odk_email_value.set(email)
-                login_message_value.set("")
-                session.send_custom_message("saveToken", {"token": odk_api.token})
-                
-                # Get projects
-                projects = odk_api.fetch_projects()
-                project_choices = {str(p['id']): p['name'] for p in projects}
-                project_choices_value.set(project_choices)
-                
-                project_id = list(project_choices.keys())[0] if project_choices else None
-                selected_project_id_value.set(project_id)
-                
-                # Progress step 7-8: Loading forms
-                p.set(7, message="Loading", detail="Retrieving forms...")
-                await asyncio.sleep(0.2)
-                
-                # Get forms
-                forms = odk_api.fetch_forms(project_id) if project_id else []
-                form_choices = {f['xmlFormId']: f['name'] for f in forms}
-                form_choices_value.set(form_choices)
-                
-                form_id = list(form_choices.keys())[0] if form_choices else None
-                selected_form_id_value.set(form_id)
-                
-                odk_api.project_id = project_id
-                odk_api.form_id = form_id
-                
-                # Progress step 8-10: Loading data
-                for i in range(8, 11):
-                    p.set(i, message="Loading", detail="Retrieving submissions...")
-                    await asyncio.sleep(0.2)
-                
-                # Load data with optimized function
-                data, message = await load_data_from_api(project_id, form_id)
-                odk_data_value.set(data)
-                data_message_value.set(message)
-                
-                # Complete login
-                logged_in_value.set(True)
-                odk_email_value.set(email)
-                login_message_value.set("")
-                session.send_custom_message("saveToken", {"token": odk_api.token})
-                
-                log_audit_event("Login", email)
-                
-        except Exception as e:
-            login_message_value.set(f"Login error: {str(e)}")
-            logging.error(f"Login error: {str(e)}")
-        finally:
-            is_loading_data.set(False)
-            hide_loading()
-
-
-    @reactive.Effect
-    @reactive.event(input.logout)
-    def handle_logout():
-        log_audit_event("Logout", odk_email_value.get())
-        logged_in_value.set(False)
-        odk_email_value.set("")
-        odk_data_value.set(pd.DataFrame())
-        data_message_value.set("")
-        login_message_value.set("")
-        project_choices_value.set({})
-        form_choices_value.set({})
-        selected_project_id_value.set(None)
-        selected_form_id_value.set(None)
-        odk_token_value.set(None)
-        gps_columns_value.set([])
-        paired_coordinates_value.set({})
-        odk_api.clear_credentials()
-        session.send_custom_message("clearToken", {})
-
-    @reactive.Effect
-    @debounce(1000)
-    @reactive.event(input.load_data)
-    def load_odk_data():
-        project_id = selected_project_id_value.get()
-        form_id = selected_form_id_value.get()
-        
-        if not project_id or not form_id:
-            data_message_value.set("Missing project or form ID.")
-            return
-            
-        show_loading("Refreshing data...")
-        is_loading_data.set(True)
-        try:
-            # Show progress bar during data loading
-            with ui.Progress(min=1, max=5) as p:
-                p.set(1, message="Preparing", detail="Preparing to fetch data...")
-                await asyncio.sleep(0.2)
-                
-                p.set(2, message="Connecting", detail="Connecting to server...")
-                await asyncio.sleep(0.2)
-                
-                p.set(3, message="Downloading", detail="Downloading submissions...")
-                # Use the centralized function to load data with caching
-                data, message = await load_data_from_api(project_id, form_id, force_refresh=False)
-                
-                p.set(4, message="Processing", detail="Processing data...")
-                await asyncio.sleep(0.2)
-                
-                p.set(5, message="Finishing", detail="Completing data load...")
-                odk_data_value.set(data)
-                data_message_value.set(message)
-                
-                log_audit_event("Data Refresh", odk_email_value.get(), f"Project: {project_id}, Form: {form_id}")
-                
-        except Exception as e:
-            data_message_value.set(f"Error loading data: {str(e)}")
-            logging.error(f"Error loading data: {str(e)}")
-        finally:
-            is_loading_data.set(False)
-            hide_loading()
-            
-    # Force refresh - bypass cache
-    @reactive.Effect
-    @reactive.event(input.force_refresh)
-    async def force_reload_odk_data():
-        project_id = selected_project_id_value.get()
-        form_id = selected_form_id_value.get()
-        
-        if not project_id or not form_id:
-            data_message_value.set("Missing project or form ID.")
-            return
-        
-        show_loading("Forcing data refresh (bypassing cache)...")
-        is_loading_data.set(True)
-        try:
-            # Show progress bar during data loading
-            with ui.Progress(min=1, max=5) as p:
-                p.set(1, message="Preparing", detail="Preparing to fetch data...")
-                await asyncio.sleep(0.2)
-                
-                p.set(2, message="Connecting", detail="Connecting to server...")
-                await asyncio.sleep(0.2)
-                
-                p.set(3, message="Downloading", detail="Downloading submissions...")
-                # Use the centralized function to load data with force_refresh=True to bypass cache
-                data, message = await load_data_from_api(project_id, form_id, force_refresh=True)
-                
-                p.set(4, message="Processing", detail="Processing data...")
-                await asyncio.sleep(0.2)
-                
-                p.set(5, message="Finishing", detail="Completing data load...")
-                odk_data_value.set(data)
-                data_message_value.set(message + " (Force refreshed)")
-                
-                log_audit_event("Force Data Refresh", odk_email_value.get(), f"Project: {project_id}, Form: {form_id}")
-                
-        except Exception as e:
-            data_message_value.set(f"Error loading data: {str(e)}")
-            logging.error(f"Error loading data: {str(e)}")
-        finally:
-            is_loading_data.set(False)
-            hide_loading()
-
-    @reactive.Effect
-    @reactive.event(input.selected_project)
-    def project_selection_effect():
-        project_id = input.selected_project()
-        if not project_id:
-            return
+          if not gps_columns:
+              return ui.div()
           
-        show_loading("Loading forms for selected project...")    
-        is_loading_data.set(True)
-        try:
-            selected_project_id_value.set(project_id)
-            forms = odk_api.fetch_forms(project_id)
-            form_choices = {f['xmlFormId']: f['name'] for f in forms}
-            form_choices_value.set(form_choices)
+          # Create more detailed info about how GPS data is stored
+          column_info = []
+          for col in gps_columns:
+              if col in paired_coords:
+                  column_info.append(f"{col} (paired with {paired_coords[col]})")
+              elif col in paired_coords.values():
+                  # Skip longitude columns as they're mentioned with their latitude pair
+                  continue
+              elif col == "patietn_health-gps_location":
+                  column_info.append(f"{col} (base column)")
+              else:
+                  column_info.append(col)
+              
+          return ui.div(
+              {"class": "gps-info-box"},
+              ui.div(
+                  {"class": "gps-info-title"},
+                  "GPS Data Available"
+              ),
+              ui.div(
+                  f"Found GPS coordinates in {len(column_info)} format(s):",
+                  ui.tags.ul(
+                      *[ui.tags.li(col_info) for col_info in column_info]
+                  )
+              )
+          )
+      
+      # Download function
+      @output
+      @render.download(filename="Botnar_Adolescent_2.csv")
+      def download_data():
+          df = filtered_df()
+          selected = selected_columns()
+          from io import StringIO
+          buffer = StringIO()
+          if df is not None and not df.empty and selected:
+              cols_to_download = [col for col in selected if col in df.columns] if selected else list(df.columns)
+              df[cols_to_download].to_csv(buffer, index=False)
+              log_audit_event("Download Data", odk_email_value.get(), f"Cols: {cols_to_download}")
+          else:
+              buffer.write("No data loaded\n")
+          yield buffer.getvalue().encode("utf-8")
+  
+      @reactive.Effect
+      @reactive.event(input.login)
+      def handle_login():
+          email = input.odk_email()
+          password = input.odk_pass()
+          if not email or not password:
+              login_message_value.set("Please enter both ODK Central email and password")
+              return
             
-            form_id = list(form_choices.keys())[0] if form_choices else None
-            if not form_id:
-                data_message_value.set("No forms available in selected project.")
-                odk_data_value.set(pd.DataFrame())
-                return
-                
-            selected_form_id_value.set(form_id)
-            odk_api.project_id = project_id
-            odk_api.form_id = form_id
-            
-            # Reset the GPS columns for the new form
-            gps_columns_value.set([])
-            paired_coordinates_value.set({})
-            
-            # Load data using the centralized function
-            data, message = await load_data_from_api(project_id, form_id)
-            odk_data_value.set(data)
-            data_message_value.set(message)
-            
-            log_audit_event("Project Selection", odk_email_value.get(), f"Project: {project_id}, Form: {form_id}")
-        except Exception as e:
-            logging.error(f"Error in project selection: {str(e)}")
-            data_message_value.set(f"Error loading project data: {str(e)}")
-        finally:
-            is_loading_data.set(False)
-            hide_loading()
-
-    @reactive.Effect
-    @reactive.event(input.selected_form)
-    def form_selection_effect():
-        form_id = input.selected_form()
-        project_id = selected_project_id_value.get()
-        if not form_id or not project_id:
-            return
+          show_loading("Authenticating...")
+          is_loading_data.set(True)
+          try:
+              # Show progress bar during login
+              with ui.Progress(min=1, max=10) as p:
+                  p.set(message="Authenticating...", detail="Connecting to server...")
+                  
+                  # Set credentials
+                  odk_api.set_credentials(email, password)
+                  
+                  # Progress step 1-3: Authentication
+                  for i in range(1, 4):
+                      p.set(i, message="Authenticating", detail="Verifying credentials...")
+                      await asyncio.sleep(0.2)
+                      
+                  # Authenticate
+                  if not odk_api.authenticate():
+                      login_message_value.set("ODK Central authentication failed")
+                      return
+                      
+                  # Progress step 4-6: Loading projects
+                  for i in range(4, 7):
+                      p.set(i, message="Loading", detail="Retrieving projects...")
+                      await asyncio.sleep(0.2)
+              
+          try:
+              odk_api.set_credentials(email, password)
+              if odk_api.authenticate():
+                  logged_in_value.set(True)
+                  odk_email_value.set(email)
+                  login_message_value.set("")
+                  session.send_custom_message("saveToken", {"token": odk_api.token})
+                  
+                  # Get projects
+                  projects = odk_api.fetch_projects()
+                  project_choices = {str(p['id']): p['name'] for p in projects}
+                  project_choices_value.set(project_choices)
+                  
+                  project_id = list(project_choices.keys())[0] if project_choices else None
+                  selected_project_id_value.set(project_id)
+                  
+                  # Progress step 7-8: Loading forms
+                  p.set(7, message="Loading", detail="Retrieving forms...")
+                  await asyncio.sleep(0.2)
+                  
+                  # Get forms
+                  forms = odk_api.fetch_forms(project_id) if project_id else []
+                  form_choices = {f['xmlFormId']: f['name'] for f in forms}
+                  form_choices_value.set(form_choices)
+                  
+                  form_id = list(form_choices.keys())[0] if form_choices else None
+                  selected_form_id_value.set(form_id)
+                  
+                  odk_api.project_id = project_id
+                  odk_api.form_id = form_id
+                  
+                  # Progress step 8-10: Loading data
+                  for i in range(8, 11):
+                      p.set(i, message="Loading", detail="Retrieving submissions...")
+                      await asyncio.sleep(0.2)
+                  
+                  # Load data with optimized function
+                  data, message = await load_data_from_api(project_id, form_id)
+                  odk_data_value.set(data)
+                  data_message_value.set(message)
+                  
+                  # Complete login
+                  logged_in_value.set(True)
+                  odk_email_value.set(email)
+                  login_message_value.set("")
+                  session.send_custom_message("saveToken", {"token": odk_api.token})
+                  
+                  log_audit_event("Login", email)
+                  
+          except Exception as e:
+              login_message_value.set(f"Login error: {str(e)}")
+              logging.error(f"Login error: {str(e)}")
+          finally:
+              is_loading_data.set(False)
+              hide_loading()
+  
+  
+      @reactive.Effect
+      @reactive.event(input.logout)
+      def handle_logout():
+          log_audit_event("Logout", odk_email_value.get())
+          logged_in_value.set(False)
+          odk_email_value.set("")
+          odk_data_value.set(pd.DataFrame())
+          data_message_value.set("")
+          login_message_value.set("")
+          project_choices_value.set({})
+          form_choices_value.set({})
+          selected_project_id_value.set(None)
+          selected_form_id_value.set(None)
+          odk_token_value.set(None)
+          gps_columns_value.set([])
+          paired_coordinates_value.set({})
+          odk_api.clear_credentials()
+          session.send_custom_message("clearToken", {})
+  
+      @reactive.Effect
+      @debounce(1000)
+      @reactive.event(input.load_data)
+      def load_odk_data():
+          project_id = selected_project_id_value.get()
+          form_id = selected_form_id_value.get()
           
-        show_loading("Loading submissions for selected form...")    
-        is_loading_data.set(True)
-        try:
-            selected_form_id_value.set(form_id)
-            odk_api.form_id = form_id
+          if not project_id or not form_id:
+              data_message_value.set("Missing project or form ID.")
+              return
+              
+          show_loading("Refreshing data...")
+          is_loading_data.set(True)
+          try:
+              # Show progress bar during data loading
+              with ui.Progress(min=1, max=5) as p:
+                  p.set(1, message="Preparing", detail="Preparing to fetch data...")
+                  await asyncio.sleep(0.2)
+                  
+                  p.set(2, message="Connecting", detail="Connecting to server...")
+                  await asyncio.sleep(0.2)
+                  
+                  p.set(3, message="Downloading", detail="Downloading submissions...")
+                  # Use the centralized function to load data with caching
+                  data, message = await load_data_from_api(project_id, form_id, force_refresh=False)
+                  
+                  p.set(4, message="Processing", detail="Processing data...")
+                  await asyncio.sleep(0.2)
+                  
+                  p.set(5, message="Finishing", detail="Completing data load...")
+                  odk_data_value.set(data)
+                  data_message_value.set(message)
+                  
+                  log_audit_event("Data Refresh", odk_email_value.get(), f"Project: {project_id}, Form: {form_id}")
+                  
+          except Exception as e:
+              data_message_value.set(f"Error loading data: {str(e)}")
+              logging.error(f"Error loading data: {str(e)}")
+          finally:
+              is_loading_data.set(False)
+              hide_loading()
+              
+      # Force refresh - bypass cache
+      @reactive.Effect
+      @reactive.event(input.force_refresh)
+      async def force_reload_odk_data():
+          project_id = selected_project_id_value.get()
+          form_id = selected_form_id_value.get()
+          
+          if not project_id or not form_id:
+              data_message_value.set("Missing project or form ID.")
+              return
+          
+          show_loading("Forcing data refresh (bypassing cache)...")
+          is_loading_data.set(True)
+          try:
+              # Show progress bar during data loading
+              with ui.Progress(min=1, max=5) as p:
+                  p.set(1, message="Preparing", detail="Preparing to fetch data...")
+                  await asyncio.sleep(0.2)
+                  
+                  p.set(2, message="Connecting", detail="Connecting to server...")
+                  await asyncio.sleep(0.2)
+                  
+                  p.set(3, message="Downloading", detail="Downloading submissions...")
+                  # Use the centralized function to load data with force_refresh=True to bypass cache
+                  data, message = await load_data_from_api(project_id, form_id, force_refresh=True)
+                  
+                  p.set(4, message="Processing", detail="Processing data...")
+                  await asyncio.sleep(0.2)
+                  
+                  p.set(5, message="Finishing", detail="Completing data load...")
+                  odk_data_value.set(data)
+                  data_message_value.set(message + " (Force refreshed)")
+                  
+                  log_audit_event("Force Data Refresh", odk_email_value.get(), f"Project: {project_id}, Form: {form_id}")
+                  
+          except Exception as e:
+              data_message_value.set(f"Error loading data: {str(e)}")
+              logging.error(f"Error loading data: {str(e)}")
+          finally:
+              is_loading_data.set(False)
+              hide_loading()
+  
+      @reactive.Effect
+      @reactive.event(input.selected_project)
+      def project_selection_effect():
+          project_id = input.selected_project()
+          if not project_id:
+              return
             
-            # Reset the GPS columns for the new form
-            gps_columns_value.set([])
-            paired_coordinates_value.set({})
+          show_loading("Loading forms for selected project...")    
+          is_loading_data.set(True)
+          try:
+              selected_project_id_value.set(project_id)
+              forms = odk_api.fetch_forms(project_id)
+              form_choices = {f['xmlFormId']: f['name'] for f in forms}
+              form_choices_value.set(form_choices)
+              
+              form_id = list(form_choices.keys())[0] if form_choices else None
+              if not form_id:
+                  data_message_value.set("No forms available in selected project.")
+                  odk_data_value.set(pd.DataFrame())
+                  return
+                  
+              selected_form_id_value.set(form_id)
+              odk_api.project_id = project_id
+              odk_api.form_id = form_id
+              
+              # Reset the GPS columns for the new form
+              gps_columns_value.set([])
+              paired_coordinates_value.set({})
+              
+              # Load data using the centralized function
+              data, message = await load_data_from_api(project_id, form_id)
+              odk_data_value.set(data)
+              data_message_value.set(message)
+              
+              log_audit_event("Project Selection", odk_email_value.get(), f"Project: {project_id}, Form: {form_id}")
+          except Exception as e:
+              logging.error(f"Error in project selection: {str(e)}")
+              data_message_value.set(f"Error loading project data: {str(e)}")
+          finally:
+              is_loading_data.set(False)
+              hide_loading()
+  
+      @reactive.Effect
+      @reactive.event(input.selected_form)
+      def form_selection_effect():
+          form_id = input.selected_form()
+          project_id = selected_project_id_value.get()
+          if not form_id or not project_id:
+              return
             
-            # Load data using the centralized function
-            data, message = load_data_from_api(project_id, form_id)
-            odk_data_value.set(data)
-            data_message_value.set(message)
+          show_loading("Loading submissions for selected form...")    
+          is_loading_data.set(True)
+          try:
+              selected_form_id_value.set(form_id)
+              odk_api.form_id = form_id
+              
+              # Reset the GPS columns for the new form
+              gps_columns_value.set([])
+              paired_coordinates_value.set({})
+              
+              # Load data using the centralized function
+              data, message = load_data_from_api(project_id, form_id)
+              odk_data_value.set(data)
+              data_message_value.set(message)
+              
+              log_audit_event("Form Selection", odk_email_value.get(), f"Project: {project_id}, Form: {form_id}")
+          except Exception as e:
+              logging.error(f"Error in form selection: {str(e)}")
+              data_message_value.set(f"Error loading form data: {str(e)}")
+          finally:
+              is_loading_data.set(False)
+              hide_loading()
+  
+      @output
+      @render.text
+      def data_message():
+          return data_message_value.get()
+  
+      @reactive.Calc(memoize=True)
+      def filtered_df():
+          df = odk_data_value.get()
+          if df is None or df.empty:
+              return pd.DataFrame()
+              
+          # Apply filters
+          for col in ["sample", "school"]:
+              filter_input = getattr(input, f"{col}_filter")() if hasattr(input, f"{col}_filter") else None
+              if filter_input and filter_input != "All" and col in df.columns:
+                  df = df[df[col].astype(str) == filter_input]
+                  
+          return df
+  
+      @reactive.Calc
+      def selected_columns():
+          """Get selected columns from individual checkboxes"""
+          df = odk_data_value.get()
+          if df is None or df.empty:
+              return []
+              
+          try:
+              # Get all column checkbox values
+              columns = list(df.columns)
+              selected = []
+              
+              # Collect the checked columns
+              for i, col in enumerate(columns):
+                  checkbox_id = f"col_{i}"
+                  if hasattr(input, checkbox_id) and getattr(input, checkbox_id)():
+                      selected.append(col)
+                      
+              if not selected:
+                  # Default to first 6 columns if nothing is selected
+                  return list(df.columns)[:min(len(df.columns),6)]
+                  
+              return selected
             
-            log_audit_event("Form Selection", odk_email_value.get(), f"Project: {project_id}, Form: {form_id}")
-        except Exception as e:
-            logging.error(f"Error in form selection: {str(e)}")
-            data_message_value.set(f"Error loading form data: {str(e)}")
-        finally:
-            is_loading_data.set(False)
-            hide_loading()
-
-    @output
-    @render.text
-    def data_message():
-        return data_message_value.get()
-
-     @reactive.Calc(memoize=True)
-    def filtered_df():
-        df = odk_data_value.get()
-        if df is None or df.empty:
-            return pd.DataFrame()
-            
-        # Apply filters
-        for col in ["sample", "school"]:
-            filter_input = getattr(input, f"{col}_filter")() if hasattr(input, f"{col}_filter") else None
-            if filter_input and filter_input != "All" and col in df.columns:
-                df = df[df[col].astype(str) == filter_input]
-                
-        return df
-
-    @reactive.Calc
-    def selected_columns():
-        """Get selected columns from individual checkboxes"""
-        df = odk_data_value.get()
-        if df is None or df.empty:
-            return []
-            
-        try:
-            # Get all column checkbox values
-            columns = list(df.columns)
-            selected = []
-            
-            # Collect the checked columns
-            for i, col in enumerate(columns):
-                checkbox_id = f"col_{i}"
-                if hasattr(input, checkbox_id) and getattr(input, checkbox_id)():
-                    selected.append(col)
-                    
-            if not selected:
-                # Default to first 6 columns if nothing is selected
+            except Exception as e:
+                logging.error(f"Error in selected_columns: {str(e)}")
                 return list(df.columns)[:min(len(df.columns),6)]
-                
-            return selected
-        except Exception as e:
-            logging.error(f"Error in selected_columns: {str(e)}")
-            return list(df.columns)[:min(len(df.columns),6)]
-
-    # New effect to update the button text
-    @reactive.Effect
-    def update_column_button_text():
-        selected = selected_columns()
-        if selected:
-            count = len(selected)
-            session.send_custom_message("updateColumnButtonText", {"count": count})
-
-    @reactive.Calc
-    def n_rows():
-        try:
-            value = input.n_rows()
-            return int(value) if value is not None else 5
-        except Exception:
-            return 5
-
-    @output
-    @render.data_frame
-    def submission_table():
-        df = filtered_df()
-        cols = selected_columns()
-        rows = n_rows()
-        
-        if df is None or df.empty:
-            return pd.DataFrame({"Message": ["No data loaded"]})
-            
-        show_cols = [c for c in cols if c in df.columns]
-        if show_cols:
-            return df[show_cols].head(rows)
-        return df.head(rows)  # Fallback to all columns
-
-    # Keep the table function for backward compatibility
-    @output
-    @render.data_frame
-    def school_count_table():
-        df = filtered_df()
-        if df is not None and not df.empty and "school" in df.columns:
-            school_counts = df["school"].value_counts().reset_index()
-            school_counts.columns = ["School", "Count"]
-            return school_counts
-        else:
-            return pd.DataFrame({"Message": ["No data loaded or no school column"]})
-    
-    # Updated horizontal bar chart for schools to fit in card
-    @output
-    @render_widget
-    def school_count_chart():
-        import plotly.express as px
-        import plotly.graph_objects as go
-        
-        df = filtered_df()
-        if df is not None and not df.empty and "school" in df.columns:
-            # Get school counts and sort by count (descending)
-            school_counts = df["school"].value_counts().reset_index()
-            school_counts.columns = ["School", "Count"]
-            school_counts = school_counts.sort_values("Count", ascending=True)  # For horizontal bars, we use ascending=True
-            
-            # Limit the number of schools to display if there are too many
-            max_schools = 15
-            if len(school_counts) > max_schools:
-                school_counts = school_counts.tail(max_schools)  # Show top schools by count
-            
-            # Calculate bar height based on number of schools
-            bar_height = min(20, 350 / max(len(school_counts), 1))  # Adjust bar height to fit
-            
-            # Create colorful horizontal bar chart
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                y=school_counts["School"],
-                x=school_counts["Count"],
-                orientation='h',
-                marker=dict(
-                    color=school_counts["Count"],
-                    colorscale='Viridis',  # You can try other colorscales like 'Turbo', 'Plasma', 'Bluered'
-                    showscale=False
-                ),
-                text=school_counts["Count"],
-                textposition='auto',
-                hovertemplate='<b>%{y}</b><br>Count: %{x}<extra></extra>'
-            ))
-            
-            # Adjust layout to fit in card
-            fig.update_layout(
-                showlegend=False,
-                xaxis_title="Number of Submissions",
-                yaxis_title=None,
-                margin=dict(l=10, r=10, t=10, b=10),  # Reduced margins
-                height=375,  # Fixed height to match card
-                xaxis=dict(
-                    gridcolor='rgba(00,35,102,0.1)',
-                    zeroline=False
-                ),
-                yaxis=dict(
-                    automargin=True
-                ),
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(size=10)  # Smaller font size
-            )
-            
-            # If there are many schools, make the y-axis text smaller
-            if len(school_counts) > 10:
-                fig.update_layout(
-                    yaxis=dict(
-                        tickfont=dict(size=9),
-                        automargin=True
-                    )
-                )
-            
-            return fig
-        else:
-            # Create empty figure with message
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No school data available",
-                showarrow=False,
-                font=dict(size=14)
-            )
-            fig.update_layout(
-                height=375,
-                xaxis=dict(showticklabels=False),
-                yaxis=dict(showticklabels=False)
-            )
-            return fig
-    
-    # Updated bar chart for age groups with percentages to fit in card
-    @output
-    @render_widget
-    def age_group_chart():
-        import plotly.express as px
-        import plotly.graph_objects as go
-        
-        df = filtered_df()
-        if df is not None and not df.empty and "age_group" in df.columns:
-            # Get age group counts
-            age_counts = df["age_group"].value_counts().reset_index()
-            age_counts.columns = ["Age Group", "Count"]
-            
-            # Calculate percentages
-            total = age_counts["Count"].sum()
-            age_counts["Percentage"] = (age_counts["Count"] / total * 100).round(1)
-            
-            # Ensure the order of age groups is correct
-            order = ["10-14", "15-19", "20-24"]
-            age_counts["Age Group"] = pd.Categorical(age_counts["Age Group"], categories=order, ordered=True)
-            age_counts = age_counts.sort_values("Age Group")
-            
-            # Create bar chart for age groups with percentages
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                x=age_counts["Age Group"],
-                y=age_counts["Count"],
-                marker=dict(
-                    color=['rgba(156, 39, 176, 0.8)', 'rgba(123, 31, 162, 0.8)', 'rgba(106, 27, 154, 0.8)'],
-                    line=dict(color='rgba(156, 39, 176, 1.0)', width=2)
-                ),
-                text=[f"{count}<br>({pct}%)" for count, pct in zip(age_counts["Count"], age_counts["Percentage"])],
-                textposition='auto',
-                hovertemplate='<b>%{x}</b><br>Count: %{y}<br>Percentage: %{text}<extra></extra>'
-            ))
-            
-            # Adjust layout to fit in card
-            fig.update_layout(
-                title=None,
-                xaxis_title="Age Group (years)",
-                yaxis_title="Number of Adolescents",
-                margin=dict(l=10, r=10, t=30, b=10),  # Reduced margins
-                height=375,  # Fixed height to match card
-                xaxis=dict(
-                    type='category',
-                    categoryorder='array',
-                    categoryarray=order,
-                    tickangle=0,
-                    gridcolor='rgba(0,0,0,0.1)'
-                ),
-                yaxis=dict(
-                    gridcolor='rgba(0,0,0,0.1)'
-                ),
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(size=12)
-            )
-            
-            # Add percentage annotations above each bar
-            for i, row in age_counts.iterrows():
-                fig.add_annotation(
-                    x=row["Age Group"],
-                    y=row["Count"],
-                    text=f"{row['Percentage']}%",
-                    showarrow=False,
-                    yshift=15,
-                    font=dict(size=12, color='rgba(106, 27, 154, 0.8)', family="Arial Black")
-                )
-            
-            return fig
-        else:
-            # Create empty figure with message
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No age data available",
-                showarrow=False,
-                font=dict(size=14)
-            )
-            fig.update_layout(
-                height=375,
-                xaxis=dict(showticklabels=False),
-                yaxis=dict(showticklabels=False)
-            )
-            return fig
-
-    # Enhanced donut charts with statistics - Fixed for Sample Distribution
-    @output
-    @render_widget
-    def sd02_donut_chart():
-        import plotly.express as px
-        import plotly.graph_objects as go
-        
-        df = filtered_df()
-        if df is not None and not df.empty and "sample" in df.columns:
-            value_counts = df["sample"].value_counts().reset_index()
-            value_counts.columns = ["Sample", "Count"]
-            
-            # Create donut chart with teal color scheme
-            fig = go.Figure(data=[go.Pie(
-                labels=value_counts["Sample"], 
-                values=value_counts["Count"],
-                hole=0.5,  # This creates the donut hole
-                marker_colors=['#4ecdc4', '#44b9b1', '#3ba6a0', '#2d8f89'],  # Teal gradient
-                textinfo='label+percent',
-                textfont=dict(size=12, color='white'),
-                hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
-            )])
-            
-            fig.update_layout(
-                showlegend=True,
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=-0.15,
-                    xanchor="center",
-                    x=0.5
-                ),
-                margin=dict(l=20, r=20, t=20, b=50),
-                height=350,
-                font=dict(size=12)
-            )
-            
-            return fig
-        else:
-            # Create empty figure with message
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No sample distribution data available",
-                showarrow=False,
-                font=dict(size=14)
-            )
-            fig.update_layout(
-                height=350,
-                xaxis=dict(showticklabels=False),
-                yaxis=dict(showticklabels=False)
-            )
-            return fig
-
-    # Enhanced donut charts with statistics - Fixed for Sex Distribution
-    @output
-    @render_widget
-    def a04_donut_chart():
-        import plotly.express as px
-        import plotly.graph_objects as go
-        
-        df = filtered_df()
-        if df is not None and not df.empty and "A04" in df.columns:
-            value_counts = df["A04"].value_counts().reset_index()
-            value_counts.columns = ["Sex", "Count"]
-            
-            # Create donut chart with orange color scheme
-            fig = go.Figure(data=[go.Pie(
-                labels=value_counts["Sex"], 
-                values=value_counts["Count"],
-                hole=0.5,  # This creates the donut hole
-                marker_colors=['#ff9800', '#ff6f00', '#e65100', '#bf360c'],  # Orange gradient
-                textinfo='label+percent',
-                textfont=dict(size=12, color='white'),
-                hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
-            )])
-            
-            fig.update_layout(
-                showlegend=True,
-                legend=dict(
-                    orientation="h",
-                    yanchor="top",
-                    y=-0.15,
-                    xanchor="center",
-                    x=0.5
-                ),
-                margin=dict(l=20, r=20, t=20, b=50),
-                height=350,
-                font=dict(size=12)
-            )
-            
-            return fig
-        else:
-            # Create empty figure with message
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No sex distribution data available",
-                showarrow=False,
-                font=dict(size=14)
-            )
-            fig.update_layout(
-                height=350,
-                xaxis=dict(showticklabels=False),
-                yaxis=dict(showticklabels=False)
-            )
-            return fig
-
-    # Updated Map visualization function using ipyleaflet with GPS columns from form
-    @output
-    @render_widget
-    def location_map():
-        from ipyleaflet import Map, Marker, MarkerCluster, Popup, basemaps, CircleMarker, Icon, AwesomeIcon
-        
-        df = filtered_df()
-        gps_columns = gps_columns_value.get()
-        paired_coords = paired_coordinates_value.get()
-        
-        # Default center coordinates (Tanzania)
-        center_lat = -6.8
-        center_lon = 39.2
-        zoom_level = 6
-        
-        # Initialize the map
-        m = Map(
-            center=(center_lat, center_lon),
-            zoom=zoom_level,
-            basemap=basemaps.OpenStreetMap.Mapnik,
-            scroll_wheel_zoom=True
-        )
-        
-        # Function to extract latitude and longitude from GPS string
-        def extract_lat_lon(gps_string):
-            if not isinstance(gps_string, str):
-                return None, None
-                
-            try:
-                parts = gps_string.split()
-                if len(parts) >= 2:
-                    lat = float(parts[0])
-                    lon = float(parts[1])
-                    # Check if values are in reasonable range for lat/lon
-                    if -90 <= lat <= 90 and -180 <= lon <= 180:
-                        return lat, lon
-            except (ValueError, TypeError):
-                pass
-            return None, None
-            
-        # Check for paired coordinate columns like the ones specified
-        has_patietn_health_coords = False
-        lat_col = "patietn_health-gps_location_Latitude"
-        lon_col = "patietn_health-gps_location_Longitude"
-        
-        if lat_col in df.columns and lon_col in df.columns:
-            has_patietn_health_coords = True
-            
-            # Create a copy of the DataFrame for mapping
-            map_df = df.copy()
-            
-            # Convert to numeric and handle potential non-numeric values
-            map_df[lat_col] = pd.to_numeric(map_df[lat_col], errors='coerce')
-            map_df[lon_col] = pd.to_numeric(map_df[lon_col], errors='coerce')
-            
-            # Drop rows with missing coordinates
-            map_df = map_df.dropna(subset=[lat_col, lon_col])
-            
-            if len(map_df) > 0:
-                # Calculate the center of the map from the data
-                center_lat = map_df[lat_col].mean()
-                center_lon = map_df[lon_col].mean()
-                m.center = (center_lat, center_lon)
-                m.zoom = 10
-                
-                # Create markers for each location
-                markers = []
-                
-                for idx, row in map_df.iterrows():
-                    # Create popup content with available information
-                    popup_content = "<div class='marker-popup-content'>"
-                    
-                    if "school" in row:
-                        popup_content += f"<h4>{row['school']}</h4>"
-                    
-                    if "sample" in row:
-                        popup_content += f"<div><strong>Sample:</strong> {row['sample']}</div>"
-                    
-                    if "A04" in row:  # Sex information
-                        popup_content += f"<div><strong>Sex:</strong> {row['A04']}</div>"
-                    
-                    if "age_group" in row:
-                        popup_content += f"<div><strong>Age Group:</strong> {row['age_group']}</div>"
-                        
-                    # Add GPS coordinates to popup
-                    popup_content += f"<div><strong>Coordinates:</strong> {row[lat_col]}, {row[lon_col]}</div>"
-                        
-                    popup_content += "</div>"
-                    
-                    # Create marker with popup
-                    marker_color = 'blue'
-                    if "sample" in row:
-                        if row["sample"] == "Public school":
-                            marker_color = 'green'
-                        elif row["sample"] == "Out of school":
-                            marker_color = 'orange'
-                            
-                    # Use CircleMarker for better visibility
-                    marker = CircleMarker(
-                        location=(row[lat_col], row[lon_col]),
-                        radius=8,
-                        color=marker_color,
-                        fill_color=marker_color,
-                        fill_opacity=0.7,
-                        popup=Popup(
-                            html=popup_content,
-                            max_width=300,
-                            close_button=True
-                        )
-                    )
-                    markers.append(marker)
-                
-                # If we have many markers, use a marker cluster for better performance
-                if len(markers) > 100:
-                    marker_cluster = MarkerCluster(markers=markers)
-                    m.add(marker_cluster)
-                else:
-                    # Add all markers to the map
-                    for marker in markers:
-                        m.add(marker)
-                
-                # Add scale control
-                from ipyleaflet import ScaleControl
-                m.add(ScaleControl(position="bottomleft"))
-                
-                # Add fullscreen control
-                from ipyleaflet import FullScreenControl
-                m.add(FullScreenControl())
-                
-                # Add layer control to switch between different basemaps
-                from ipyleaflet import LayersControl
-                m.add(LayersControl(position="topright"))
-                
-                # Add a different basemap as an option
-                from ipyleaflet import TileLayer
-                satellite = TileLayer(
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                    attribution="Esri World Imagery",
-                    name="Satellite"
-                )
-                m.add(satellite)
-                
-                return m
-        
-        # If we didn't find or couldn't use the specific patient health GPS columns, try other approaches
-        if not has_patietn_health_coords and gps_columns:
-            # We have GPS data available, try to plot it
-            map_df = df.copy()
-            coordinates = []
-            
-            # Check for other paired coordinates
-            for lat_col, lon_col in paired_coords.items():
-                if lat_col in df.columns and lon_col in df.columns:
-                    map_df["latitude"] = pd.to_numeric(map_df[lat_col], errors='coerce')
-                    map_df["longitude"] = pd.to_numeric(map_df[lon_col], errors='coerce')
-                    
-                    # Drop rows with missing coordinates
-                    valid_coords = map_df.dropna(subset=["latitude", "longitude"])
-                    
-                    for idx, row in valid_coords.iterrows():
-                        coordinates.append((idx, row["latitude"], row["longitude"]))
-                    
-                    if coordinates:
-                        break
-            
-            # If no paired coordinates, try columns with combined GPS format
-            if not coordinates:
-                for col in gps_columns:
-                    if col in paired_coords or col in paired_coords.values():
-                        continue
-                        
-                    map_df["latitude"] = None
-                    map_df["longitude"] = None
-                    
-                    for idx, row in map_df.iterrows():
-                        lat, lon = extract_lat_lon(row[col])
-                        if lat is not None and lon is not None:
-                            map_df.at[idx, "latitude"] = lat
-                            map_df.at[idx, "longitude"] = lon
-                            coordinates.append((idx, lat, lon))
-                    
-                    if coordinates:
-                        break
-            
-            # If we have coordinates, update the map
-            if coordinates:
-                # Calculate the center of the map from the data
-                lats = [lat for _, lat, _ in coordinates]
-                lons = [lon for _, _, lon in coordinates]
-                center_lat = sum(lats) / len(lats)
-                center_lon = sum(lons) / len(lons)
-                m.center = (center_lat, center_lon)
-                m.zoom = 10
-                
-                # Create markers for each location
-                markers = []
-                
-                for idx, lat, lon in coordinates:
-                    row = map_df.iloc[idx]
-                    
-                    # Create popup content with available information
-                    popup_content = "<div class='marker-popup-content'>"
-                    
-                    if "school" in row:
-                        popup_content += f"<h4>{row['school']}</h4>"
-                    
-                    if "sample" in row:
-                        popup_content += f"<div><strong>Sample:</strong> {row['sample']}</div>"
-                    
-                    if "A04" in row:  # Sex information
-                        popup_content += f"<div><strong>Sex:</strong> {row['A04']}</div>"
-                    
-                    if "age_group" in row:
-                        popup_content += f"<div><strong>Age Group:</strong> {row['age_group']}</div>"
-                        
-                    # Add GPS coordinates to popup
-                    popup_content += f"<div><strong>Coordinates:</strong> {lat}, {lon}</div>"
-                        
-                    popup_content += "</div>"
-                    
-                    # Create marker with popup
-                    marker_color = 'blue'
-                    if "sample" in row:
-                        if row["sample"] == "Public school":
-                            marker_color = 'green'
-                        elif row["sample"] == "Out of school":
-                            marker_color = 'orange'
-                            
-                    # Use CircleMarker for better visibility
-                    marker = CircleMarker(
-                        location=(lat, lon),
-                        radius=8,
-                        color=marker_color,
-                        fill_color=marker_color,
-                        fill_opacity=0.7,
-                        popup=Popup(
-                            html=popup_content,
-                            max_width=300,
-                            close_button=True
-                        )
-                    )
-                    markers.append(marker)
-                
-                # If we have many markers, use a marker cluster for better performance
-                if len(markers) > 100:
-                    marker_cluster = MarkerCluster(markers=markers)
-                    m.add(marker_cluster)
-                else:
-                    # Add all markers to the map
-                    for marker in markers:
-                        m.add(marker)
-                
-                # Add scale control
-                from ipyleaflet import ScaleControl
-                m.add(ScaleControl(position="bottomleft"))
-                
-                # Add fullscreen control
-                from ipyleaflet import FullScreenControl
-                m.add(FullScreenControl())
-                
-                # Add layer control to switch between different basemaps
-                from ipyleaflet import LayersControl
-                m.add(LayersControl(position="topright"))
-                
-                # Add a different basemap as an option
-                from ipyleaflet import TileLayer
-                satellite = TileLayer(
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                    attribution="Esri World Imagery",
-                    name="Satellite"
-                )
-                m.add(satellite)
-                
-                return m
-                
-        # If we couldn't find valid coordinates, show an appropriate message
-        from ipyleaflet import Popup
-        popup = Popup(
-            html="<div style='text-align: center; padding: 10px;'><h4>No valid GPS coordinates found</h4></div>",
-            close_button=True
-        )
-        m.add(popup)
-        return m
-
-    # Additional statistics for sample distribution
-    @output
-    @render.ui
-    def sample_stats():
-        df = filtered_df()
-        if df is not None and not df.empty and "sample" in df.columns:
-            value_counts = df["sample"].value_counts()
-            total = len(df)
-            most_common = value_counts.index[0] if len(value_counts) > 0 else "N/A"
-            
-            return ui.div(
-                {"class": "chart-stats"},
-                ui.div(
-                    {"class": "stat-item"},
-                    ui.div(str(total), {"class": "stat-value"}),
-                    ui.div("Total", {"class": "stat-label"})
-                ),
-                ui.div(
-                    {"class": "stat-item"},
-                    ui.div(str(len(value_counts)), {"class": "stat-value"}),
-                    ui.div("Categories", {"class": "stat-label"})
-                ),
-                ui.div(
-                    {"class": "stat-item"},
-                    ui.div(most_common, {"class": "stat-value"}),
-                    ui.div("Most Common", {"class": "stat-label"})
-                )
-            )
-        return ui.div()
-
-    # Additional statistics for sex distribution
-    @output
-    @render.ui
-    def sex_stats():
-        df = filtered_df()
-        if df is not None and not df.empty and "A04" in df.columns:
-            value_counts = df["A04"].value_counts()
-            total = len(df)
-            most_common = value_counts.index[0] if len(value_counts) > 0 else "N/A"
-            male_count = value_counts.get("Male", 0)
-            female_count = value_counts.get("Female", 0)
-            
-            return ui.div(
-                {"class": "chart-stats"},
-                ui.div(
-                    {"class": "stat-item"},
-                    ui.div(str(total), {"class": "stat-value"}),
-                    ui.div("Total", {"class": "stat-label"})
-                ),
-                ui.div(
-                    {"class": "stat-item"},
-                    ui.div(str(male_count), {"class": "stat-value"}),
-                    ui.div("Male", {"class": "stat-label"})
-                ),
-                ui.div(
-                    {"class": "stat-item"},
-                    ui.div(str(female_count), {"class": "stat-value"}),
-                    ui.div("Female", {"class": "stat-label"})
-                )
-            )
-        return ui.div()
-
-    @output
-    @render.text
-    def selected_columns_count():
-        df = odk_data_value.get()
-        if df is None or df.empty:
-            return ""
-        selected = selected_columns()
-        n_total = len(df.columns)
-        n_sel = len(selected) if selected else 0
-        return f"{n_sel} of {n_total} columns selected"
+  
+      # New effect to update the button text
+      @reactive.Effect
+      def update_column_button_text():
+          selected = selected_columns()
+          if selected:
+              count = len(selected)
+              session.send_custom_message("updateColumnButtonText", {"count": count})
+  
+      @reactive.Calc
+      def n_rows():
+          try:
+              value = input.n_rows()
+              return int(value) if value is not None else 5
+          except Exception:
+              return 5
+  
+      @output
+      @render.data_frame
+      def submission_table():
+          df = filtered_df()
+          cols = selected_columns()
+          rows = n_rows()
+          
+          if df is None or df.empty:
+              return pd.DataFrame({"Message": ["No data loaded"]})
+              
+          show_cols = [c for c in cols if c in df.columns]
+          if show_cols:
+              return df[show_cols].head(rows)
+          return df.head(rows)  # Fallback to all columns
+  
+      # Keep the table function for backward compatibility
+      @output
+      @render.data_frame
+      def school_count_table():
+          df = filtered_df()
+          if df is not None and not df.empty and "school" in df.columns:
+              school_counts = df["school"].value_counts().reset_index()
+              school_counts.columns = ["School", "Count"]
+              return school_counts
+          else:
+              return pd.DataFrame({"Message": ["No data loaded or no school column"]})
+      
+      # Updated horizontal bar chart for schools to fit in card
+      @output
+      @render_widget
+      def school_count_chart():
+          import plotly.express as px
+          import plotly.graph_objects as go
+          
+          df = filtered_df()
+          if df is not None and not df.empty and "school" in df.columns:
+              # Get school counts and sort by count (descending)
+              school_counts = df["school"].value_counts().reset_index()
+              school_counts.columns = ["School", "Count"]
+              school_counts = school_counts.sort_values("Count", ascending=True)  # For horizontal bars, we use ascending=True
+              
+              # Limit the number of schools to display if there are too many
+              max_schools = 15
+              if len(school_counts) > max_schools:
+                  school_counts = school_counts.tail(max_schools)  # Show top schools by count
+              
+              # Calculate bar height based on number of schools
+              bar_height = min(20, 350 / max(len(school_counts), 1))  # Adjust bar height to fit
+              
+              # Create colorful horizontal bar chart
+              fig = go.Figure()
+              fig.add_trace(go.Bar(
+                  y=school_counts["School"],
+                  x=school_counts["Count"],
+                  orientation='h',
+                  marker=dict(
+                      color=school_counts["Count"],
+                      colorscale='Viridis',  # You can try other colorscales like 'Turbo', 'Plasma', 'Bluered'
+                      showscale=False
+                  ),
+                  text=school_counts["Count"],
+                  textposition='auto',
+                  hovertemplate='<b>%{y}</b><br>Count: %{x}<extra></extra>'
+              ))
+              
+              # Adjust layout to fit in card
+              fig.update_layout(
+                  showlegend=False,
+                  xaxis_title="Number of Submissions",
+                  yaxis_title=None,
+                  margin=dict(l=10, r=10, t=10, b=10),  # Reduced margins
+                  height=375,  # Fixed height to match card
+                  xaxis=dict(
+                      gridcolor='rgba(00,35,102,0.1)',
+                      zeroline=False
+                  ),
+                  yaxis=dict(
+                      automargin=True
+                  ),
+                  plot_bgcolor='rgba(0,0,0,0)',
+                  paper_bgcolor='rgba(0,0,0,0)',
+                  font=dict(size=10)  # Smaller font size
+              )
+              
+              # If there are many schools, make the y-axis text smaller
+              if len(school_counts) > 10:
+                  fig.update_layout(
+                      yaxis=dict(
+                          tickfont=dict(size=9),
+                          automargin=True
+                      )
+                  )
+              
+              return fig
+          else:
+              # Create empty figure with message
+              fig = go.Figure()
+              fig.add_annotation(
+                  text="No school data available",
+                  showarrow=False,
+                  font=dict(size=14)
+              )
+              fig.update_layout(
+                  height=375,
+                  xaxis=dict(showticklabels=False),
+                  yaxis=dict(showticklabels=False)
+              )
+              return fig
+      
+      # Updated bar chart for age groups with percentages to fit in card
+      @output
+      @render_widget
+      def age_group_chart():
+          import plotly.express as px
+          import plotly.graph_objects as go
+          
+          df = filtered_df()
+          if df is not None and not df.empty and "age_group" in df.columns:
+              # Get age group counts
+              age_counts = df["age_group"].value_counts().reset_index()
+              age_counts.columns = ["Age Group", "Count"]
+              
+              # Calculate percentages
+              total = age_counts["Count"].sum()
+              age_counts["Percentage"] = (age_counts["Count"] / total * 100).round(1)
+              
+              # Ensure the order of age groups is correct
+              order = ["10-14", "15-19", "20-24"]
+              age_counts["Age Group"] = pd.Categorical(age_counts["Age Group"], categories=order, ordered=True)
+              age_counts = age_counts.sort_values("Age Group")
+              
+              # Create bar chart for age groups with percentages
+              fig = go.Figure()
+              fig.add_trace(go.Bar(
+                  x=age_counts["Age Group"],
+                  y=age_counts["Count"],
+                  marker=dict(
+                      color=['rgba(156, 39, 176, 0.8)', 'rgba(123, 31, 162, 0.8)', 'rgba(106, 27, 154, 0.8)'],
+                      line=dict(color='rgba(156, 39, 176, 1.0)', width=2)
+                  ),
+                  text=[f"{count}<br>({pct}%)" for count, pct in zip(age_counts["Count"], age_counts["Percentage"])],
+                  textposition='auto',
+                  hovertemplate='<b>%{x}</b><br>Count: %{y}<br>Percentage: %{text}<extra></extra>'
+              ))
+              
+              # Adjust layout to fit in card
+              fig.update_layout(
+                  title=None,
+                  xaxis_title="Age Group (years)",
+                  yaxis_title="Number of Adolescents",
+                  margin=dict(l=10, r=10, t=30, b=10),  # Reduced margins
+                  height=375,  # Fixed height to match card
+                  xaxis=dict(
+                      type='category',
+                      categoryorder='array',
+                      categoryarray=order,
+                      tickangle=0,
+                      gridcolor='rgba(0,0,0,0.1)'
+                  ),
+                  yaxis=dict(
+                      gridcolor='rgba(0,0,0,0.1)'
+                  ),
+                  plot_bgcolor='rgba(0,0,0,0)',
+                  paper_bgcolor='rgba(0,0,0,0)',
+                  font=dict(size=12)
+              )
+              
+              # Add percentage annotations above each bar
+              for i, row in age_counts.iterrows():
+                  fig.add_annotation(
+                      x=row["Age Group"],
+                      y=row["Count"],
+                      text=f"{row['Percentage']}%",
+                      showarrow=False,
+                      yshift=15,
+                      font=dict(size=12, color='rgba(106, 27, 154, 0.8)', family="Arial Black")
+                  )
+              
+              return fig
+          else:
+              # Create empty figure with message
+              fig = go.Figure()
+              fig.add_annotation(
+                  text="No age data available",
+                  showarrow=False,
+                  font=dict(size=14)
+              )
+              fig.update_layout(
+                  height=375,
+                  xaxis=dict(showticklabels=False),
+                  yaxis=dict(showticklabels=False)
+              )
+              return fig
+  
+      # Enhanced donut charts with statistics - Fixed for Sample Distribution
+      @output
+      @render_widget
+      def sd02_donut_chart():
+          import plotly.express as px
+          import plotly.graph_objects as go
+          
+          df = filtered_df()
+          if df is not None and not df.empty and "sample" in df.columns:
+              value_counts = df["sample"].value_counts().reset_index()
+              value_counts.columns = ["Sample", "Count"]
+              
+              # Create donut chart with teal color scheme
+              fig = go.Figure(data=[go.Pie(
+                  labels=value_counts["Sample"], 
+                  values=value_counts["Count"],
+                  hole=0.5,  # This creates the donut hole
+                  marker_colors=['#4ecdc4', '#44b9b1', '#3ba6a0', '#2d8f89'],  # Teal gradient
+                  textinfo='label+percent',
+                  textfont=dict(size=12, color='white'),
+                  hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
+              )])
+              
+              fig.update_layout(
+                  showlegend=True,
+                  legend=dict(
+                      orientation="h",
+                      yanchor="bottom",
+                      y=-0.15,
+                      xanchor="center",
+                      x=0.5
+                  ),
+                  margin=dict(l=20, r=20, t=20, b=50),
+                  height=350,
+                  font=dict(size=12)
+              )
+              
+              return fig
+          else:
+              # Create empty figure with message
+              fig = go.Figure()
+              fig.add_annotation(
+                  text="No sample distribution data available",
+                  showarrow=False,
+                  font=dict(size=14)
+              )
+              fig.update_layout(
+                  height=350,
+                  xaxis=dict(showticklabels=False),
+                  yaxis=dict(showticklabels=False)
+              )
+              return fig
+  
+      # Enhanced donut charts with statistics - Fixed for Sex Distribution
+      @output
+      @render_widget
+      def a04_donut_chart():
+          import plotly.express as px
+          import plotly.graph_objects as go
+          
+          df = filtered_df()
+          if df is not None and not df.empty and "A04" in df.columns:
+              value_counts = df["A04"].value_counts().reset_index()
+              value_counts.columns = ["Sex", "Count"]
+              
+              # Create donut chart with orange color scheme
+              fig = go.Figure(data=[go.Pie(
+                  labels=value_counts["Sex"], 
+                  values=value_counts["Count"],
+                  hole=0.5,  # This creates the donut hole
+                  marker_colors=['#ff9800', '#ff6f00', '#e65100', '#bf360c'],  # Orange gradient
+                  textinfo='label+percent',
+                  textfont=dict(size=12, color='white'),
+                  hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
+              )])
+              
+              fig.update_layout(
+                  showlegend=True,
+                  legend=dict(
+                      orientation="h",
+                      yanchor="top",
+                      y=-0.15,
+                      xanchor="center",
+                      x=0.5
+                  ),
+                  margin=dict(l=20, r=20, t=20, b=50),
+                  height=350,
+                  font=dict(size=12)
+              )
+              
+              return fig
+          else:
+              # Create empty figure with message
+              fig = go.Figure()
+              fig.add_annotation(
+                  text="No sex distribution data available",
+                  showarrow=False,
+                  font=dict(size=14)
+              )
+              fig.update_layout(
+                  height=350,
+                  xaxis=dict(showticklabels=False),
+                  yaxis=dict(showticklabels=False)
+              )
+              return fig
+  
+      # Updated Map visualization function using ipyleaflet with GPS columns from form
+      @output
+      @render_widget
+      def location_map():
+          from ipyleaflet import Map, Marker, MarkerCluster, Popup, basemaps, CircleMarker, Icon, AwesomeIcon
+          
+          df = filtered_df()
+          gps_columns = gps_columns_value.get()
+          paired_coords = paired_coordinates_value.get()
+          
+          # Default center coordinates (Tanzania)
+          center_lat = -6.8
+          center_lon = 39.2
+          zoom_level = 6
+          
+          # Initialize the map
+          m = Map(
+              center=(center_lat, center_lon),
+              zoom=zoom_level,
+              basemap=basemaps.OpenStreetMap.Mapnik,
+              scroll_wheel_zoom=True
+          )
+          
+          # Function to extract latitude and longitude from GPS string
+          def extract_lat_lon(gps_string):
+              if not isinstance(gps_string, str):
+                  return None, None
+                  
+              try:
+                  parts = gps_string.split()
+                  if len(parts) >= 2:
+                      lat = float(parts[0])
+                      lon = float(parts[1])
+                      # Check if values are in reasonable range for lat/lon
+                      if -90 <= lat <= 90 and -180 <= lon <= 180:
+                          return lat, lon
+              except (ValueError, TypeError):
+                  pass
+              return None, None
+              
+              # Check for paired coordinate columns like the ones specified
+              has_patietn_health_coords = False
+              lat_col = "patietn_health-gps_location_Latitude"
+              lon_col = "patietn_health-gps_location_Longitude"
+          
+          if lat_col in df.columns and lon_col in df.columns:
+              has_patietn_health_coords = True
+              
+              # Create a copy of the DataFrame for mapping
+              map_df = df.copy()
+              
+              # Convert to numeric and handle potential non-numeric values
+              map_df[lat_col] = pd.to_numeric(map_df[lat_col], errors='coerce')
+              map_df[lon_col] = pd.to_numeric(map_df[lon_col], errors='coerce')
+              
+              # Drop rows with missing coordinates
+              map_df = map_df.dropna(subset=[lat_col, lon_col])
+              
+              if len(map_df) > 0:
+                  # Calculate the center of the map from the data
+                  center_lat = map_df[lat_col].mean()
+                  center_lon = map_df[lon_col].mean()
+                  m.center = (center_lat, center_lon)
+                  m.zoom = 10
+                  
+                  # Create markers for each location
+                  markers = []
+                  
+                  for idx, row in map_df.iterrows():
+                      # Create popup content with available information
+                      popup_content = "<div class='marker-popup-content'>"
+                      
+                      if "school" in row:
+                          popup_content += f"<h4>{row['school']}</h4>"
+                      
+                      if "sample" in row:
+                          popup_content += f"<div><strong>Sample:</strong> {row['sample']}</div>"
+                      
+                      if "A04" in row:  # Sex information
+                          popup_content += f"<div><strong>Sex:</strong> {row['A04']}</div>"
+                      
+                      if "age_group" in row:
+                          popup_content += f"<div><strong>Age Group:</strong> {row['age_group']}</div>"
+                          
+                      # Add GPS coordinates to popup
+                      popup_content += f"<div><strong>Coordinates:</strong> {row[lat_col]}, {row[lon_col]}</div>"
+                          
+                      popup_content += "</div>"
+                      
+                      # Create marker with popup
+                      marker_color = 'blue'
+                      if "sample" in row:
+                          if row["sample"] == "Public school":
+                              marker_color = 'green'
+                          elif row["sample"] == "Out of school":
+                              marker_color = 'orange'
+                              
+                      # Use CircleMarker for better visibility
+                      marker = CircleMarker(
+                          location=(row[lat_col], row[lon_col]),
+                          radius=8,
+                          color=marker_color,
+                          fill_color=marker_color,
+                          fill_opacity=0.7,
+                          popup=Popup(
+                              html=popup_content,
+                              max_width=300,
+                              close_button=True
+                          )
+                      )
+                      markers.append(marker)
+                  
+                  # If we have many markers, use a marker cluster for better performance
+                  if len(markers) > 100:
+                      marker_cluster = MarkerCluster(markers=markers)
+                      m.add(marker_cluster)
+                  else:
+                      # Add all markers to the map
+                      for marker in markers:
+                          m.add(marker)
+                  
+                  # Add scale control
+                  from ipyleaflet import ScaleControl
+                  m.add(ScaleControl(position="bottomleft"))
+                  
+                  # Add fullscreen control
+                  from ipyleaflet import FullScreenControl
+                  m.add(FullScreenControl())
+                  
+                  # Add layer control to switch between different basemaps
+                  from ipyleaflet import LayersControl
+                  m.add(LayersControl(position="topright"))
+                  
+                  # Add a different basemap as an option
+                  from ipyleaflet import TileLayer
+                  satellite = TileLayer(
+                      url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                      attribution="Esri World Imagery",
+                      name="Satellite"
+                  )
+                  m.add(satellite)
+                  return m
+          
+          # If we didn't find or couldn't use the specific patient health GPS columns, try other approaches
+          if not has_patietn_health_coords and gps_columns:
+              # We have GPS data available, try to plot it
+              map_df = df.copy()
+              coordinates = []
+              
+              # Check for other paired coordinates
+              for lat_col, lon_col in paired_coords.items():
+                  if lat_col in df.columns and lon_col in df.columns:
+                      map_df["latitude"] = pd.to_numeric(map_df[lat_col], errors='coerce')
+                      map_df["longitude"] = pd.to_numeric(map_df[lon_col], errors='coerce')
+                      
+                      # Drop rows with missing coordinates
+                      valid_coords = map_df.dropna(subset=["latitude", "longitude"])
+                      
+                      for idx, row in valid_coords.iterrows():
+                          coordinates.append((idx, row["latitude"], row["longitude"]))
+                      
+                      if coordinates:
+                          break
+              
+              # If no paired coordinates, try columns with combined GPS format
+              if not coordinates:
+                  for col in gps_columns:
+                      if col in paired_coords or col in paired_coords.values():
+                          continue
+                          
+                      map_df["latitude"] = None
+                      map_df["longitude"] = None
+                      
+                      for idx, row in map_df.iterrows():
+                          lat, lon = extract_lat_lon(row[col])
+                          if lat is not None and lon is not None:
+                              map_df.at[idx, "latitude"] = lat
+                              map_df.at[idx, "longitude"] = lon
+                              coordinates.append((idx, lat, lon))
+                      
+                      if coordinates:
+                          break
+              
+              # If we have coordinates, update the map
+              if coordinates:
+                  # Calculate the center of the map from the data
+                  lats = [lat for _, lat, _ in coordinates]
+                  lons = [lon for _, _, lon in coordinates]
+                  center_lat = sum(lats) / len(lats)
+                  center_lon = sum(lons) / len(lons)
+                  m.center = (center_lat, center_lon)
+                  m.zoom = 10
+                  
+                  # Create markers for each location
+                  markers = []
+                  
+                  for idx, lat, lon in coordinates:
+                      row = map_df.iloc[idx]
+                      
+                      # Create popup content with available information
+                      popup_content = "<div class='marker-popup-content'>"
+                      
+                      if "school" in row:
+                          popup_content += f"<h4>{row['school']}</h4>"
+                      
+                      if "sample" in row:
+                          popup_content += f"<div><strong>Sample:</strong> {row['sample']}</div>"
+                      
+                      if "A04" in row:  # Sex information
+                          popup_content += f"<div><strong>Sex:</strong> {row['A04']}</div>"
+                      
+                      if "age_group" in row:
+                          popup_content += f"<div><strong>Age Group:</strong> {row['age_group']}</div>"
+                          
+                      # Add GPS coordinates to popup
+                      popup_content += f"<div><strong>Coordinates:</strong> {lat}, {lon}</div>"
+                          
+                      popup_content += "</div>"
+                      
+                      # Create marker with popup
+                      marker_color = 'blue'
+                      if "sample" in row:
+                          if row["sample"] == "Public school":
+                              marker_color = 'green'
+                          elif row["sample"] == "Out of school":
+                              marker_color = 'orange'
+                              
+                      # Use CircleMarker for better visibility
+                      marker = CircleMarker(
+                          location=(lat, lon),
+                          radius=8,
+                          color=marker_color,
+                          fill_color=marker_color,
+                          fill_opacity=0.7,
+                          popup=Popup(
+                              html=popup_content,
+                              max_width=300,
+                              close_button=True
+                          )
+                      )
+                      markers.append(marker)
+                  
+                  # If we have many markers, use a marker cluster for better performance
+                  if len(markers) > 100:
+                      marker_cluster = MarkerCluster(markers=markers)
+                      m.add(marker_cluster)
+                  else:
+                      # Add all markers to the map
+                      for marker in markers:
+                          m.add(marker)
+                  
+                  # Add scale control
+                  from ipyleaflet import ScaleControl
+                  m.add(ScaleControl(position="bottomleft"))
+                  
+                  # Add fullscreen control
+                  from ipyleaflet import FullScreenControl
+                  m.add(FullScreenControl())
+                  
+                  # Add layer control to switch between different basemaps
+                  from ipyleaflet import LayersControl
+                  m.add(LayersControl(position="topright"))
+                  
+                  # Add a different basemap as an option
+                  from ipyleaflet import TileLayer
+                  satellite = TileLayer(
+                      url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                      attribution="Esri World Imagery",
+                      name="Satellite"
+                  )
+                  m.add(satellite)
+                  return m
+                  
+          # If we couldn't find valid coordinates, show an appropriate message
+          from ipyleaflet import Popup
+          popup = Popup(
+              html="<div style='text-align: center; padding: 10px;'><h4>No valid GPS coordinates found</h4></div>",
+              close_button=True
+          )
+          m.add(popup)
+          return m
+  
+      # Additional statistics for sample distribution
+      @output
+      @render.ui
+      def sample_stats():
+          df = filtered_df()
+          if df is not None and not df.empty and "sample" in df.columns:
+              value_counts = df["sample"].value_counts()
+              total = len(df)
+              most_common = value_counts.index[0] if len(value_counts) > 0 else "N/A"
+              
+              return ui.div(
+                  {"class": "chart-stats"},
+                  ui.div(
+                      {"class": "stat-item"},
+                      ui.div(str(total), {"class": "stat-value"}),
+                      ui.div("Total", {"class": "stat-label"})
+                  ),
+                  ui.div(
+                      {"class": "stat-item"},
+                      ui.div(str(len(value_counts)), {"class": "stat-value"}),
+                      ui.div("Categories", {"class": "stat-label"})
+                  ),
+                  ui.div(
+                      {"class": "stat-item"},
+                      ui.div(most_common, {"class": "stat-value"}),
+                      ui.div("Most Common", {"class": "stat-label"})
+                  )
+              )
+          return ui.div()
+  
+      # Additional statistics for sex distribution
+      @output
+      @render.ui
+      def sex_stats():
+          df = filtered_df()
+          if df is not None and not df.empty and "A04" in df.columns:
+              value_counts = df["A04"].value_counts()
+              total = len(df)
+              most_common = value_counts.index[0] if len(value_counts) > 0 else "N/A"
+              male_count = value_counts.get("Male", 0)
+              female_count = value_counts.get("Female", 0)
+              
+              return ui.div(
+                  {"class": "chart-stats"},
+                  ui.div(
+                      {"class": "stat-item"},
+                      ui.div(str(total), {"class": "stat-value"}),
+                      ui.div("Total", {"class": "stat-label"})
+                  ),
+                  ui.div(
+                      {"class": "stat-item"},
+                      ui.div(str(male_count), {"class": "stat-value"}),
+                      ui.div("Male", {"class": "stat-label"})
+                  ),
+                  ui.div(
+                      {"class": "stat-item"},
+                      ui.div(str(female_count), {"class": "stat-value"}),
+                      ui.div("Female", {"class": "stat-label"})
+                  )
+              )
+          return ui.div()
+  
+      @output
+      @render.text
+      def selected_columns_count():
+          df = odk_data_value.get()
+          if df is None or df.empty:
+              return ""
+          selected = selected_columns()
+          n_total = len(df.columns)
+          n_sel = len(selected) if selected else 0
+          return f"{n_sel} of {n_total} columns selected"
 
 def open_browser():
     url = "http://127.0.0.1:8000"
