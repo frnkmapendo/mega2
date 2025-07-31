@@ -105,16 +105,16 @@ def server(input, output, session):
         percentage = input.project_percentage()
         
         if not name or not name.strip():
-            ui.notification_show("Project name is required", "error")
+            ui.notification_show("Project name is required", type="error")
             return
             
         if timesheet_manager.add_project(name.strip(), percentage):
-            ui.notification_show(f"Project '{name}' added successfully", "success")
+            ui.notification_show(f"Project '{name}' added successfully", type="success")
             # Clear inputs
             ui.update_text("project_name", value="")
             ui.update_numeric("project_percentage", value=10)
         else:
-            ui.notification_show("Failed to add project. Check name and percentage allocation.", "error")
+            ui.notification_show("Failed to add project. Check name and percentage allocation.", type="error")
     
     @output
     @render.ui
@@ -149,7 +149,7 @@ def server(input, output, session):
     @reactive.event(input.generate_timesheet)
     def generate_timesheet():
         if not timesheet_manager.projects:
-            ui.notification_show("Please add projects first", "warning")
+            ui.notification_show("Please add projects first", type="warning")
             return
             
         year = int(input.timesheet_year())
@@ -159,9 +159,9 @@ def server(input, output, session):
         try:
             df = timesheet_manager.get_project_hours_daily(year, month, randomize)
             timesheet_data.set(df)
-            ui.notification_show("Timesheet generated successfully", "success")
+            ui.notification_show("Timesheet generated successfully", type="success")
         except Exception as e:
-            ui.notification_show(f"Error generating timesheet: {str(e)}", "error")
+            ui.notification_show(f"Error generating timesheet: {str(e)}", type="error")
     
     @output
     @render.ui
@@ -238,7 +238,7 @@ def server(input, output, session):
             excel_buffer = timesheet_manager.export_to_excel(year, month, randomize)
             return excel_buffer.getvalue()
         except Exception as e:
-            ui.notification_show(f"Error generating Excel: {str(e)}", "error")
+            ui.notification_show(f"Error generating Excel: {str(e)}", type="error")
             return b""
 
 def open_browser():
