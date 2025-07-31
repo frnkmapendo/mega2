@@ -1340,10 +1340,13 @@ def server(input, output, session: Session):
                                   ui.tags.span(f"0 of {total_columns}", id="dropdown-counter"),
                                   ui.tags.span({"class": "ms-1"}, ui.tags.i({"class": "fas fa-chevron-down"}))
                               ],
-                              id="submission-field-dropdown-toggle",
-                              class_="btn dropdown-toggle d-flex justify-content-between align-items-center w-100",
-                              type="button",
-                              **{"data-bs-toggle": "dropdown", "aria-expanded": "false"}
+                              **{
+                                  "id": "submission-field-dropdown-toggle",
+                                  "class": "btn dropdown-toggle d-flex justify-content-between align-items-center w-100",
+                                  "type": "button",
+                                  "data-bs-toggle": "dropdown", 
+                                  "aria-expanded": "false"
+                              }
                           ),
                           ui.tags.div(
                               {"class": "dropdown-menu w-100 p-0", "id": "column-dropdown-list"},
