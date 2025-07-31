@@ -8,10 +8,15 @@ import asyncio
 import seaborn as sns
 from palmerpenguins import load_penguins
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from shiny import App, ui, render, reactive, Session
 from shinywidgets import output_widget, render_widget
 from ipyleaflet import Map, Marker, MarkerCluster, Popup, basemaps, CircleMarker, Icon, AwesomeIcon, TileLayer
+import random
+import calendar
+import openpyxl
+from io import BytesIO
+import numpy as np
 
 # ===== Configure Logging =====
 logging.basicConfig(
@@ -168,6 +173,183 @@ class ODKCentralAPI:
         except Exception as e:
             logging.error(f"Failed to fetch submissions: {e}")
             return pd.DataFrame({"Error": [f"Failed to fetch submissions: {str(e)}"]})
+
+# ===== Timesheet Management System =====
+class TimesheetManager:
+    def __init__(self):
+        self.projects = []
+        self.total_work_hours_per_day = 8  # Standard 8-hour workday
+        self.minimum_time_block = 0.5  # 30 minutes minimum
+        
+    def add_project(self, name, percentage):
+        """Add a project with its percentage allocation"""
+        if not name or percentage <= 0 or percentage > 100:
+            return False
+        
+        # Check if total percentage would exceed 100%
+        current_total = sum(p['percentage'] for p in self.projects)
+        if current_total + percentage > 100:
+            return False
+            
+        project = {
+            'id': len(self.projects) + 1,
+            'name': name,
+            'percentage': percentage,
+            'daily_hours': (percentage / 100) * self.total_work_hours_per_day
+        }
+        self.projects.append(project)
+        return True
+    
+    def remove_project(self, project_id):
+        """Remove a project by ID"""
+        self.projects = [p for p in self.projects if p['id'] != project_id]
+        
+    def get_working_days(self, year, month):
+        """Get list of working days (Mon-Fri) for a given month"""
+        cal = calendar.monthcalendar(year, month)
+        working_days = []
+        
+        for week in cal:
+            for day_num, day in enumerate(week):
+                if day != 0 and day_num < 5:  # Monday=0 to Friday=4
+                    working_days.append(day)
+        
+        return working_days
+    
+    def get_project_hours_daily(self, year, month, randomize_small_projects=False):
+        """
+        Calculate daily hours for each project in a given month
+        
+        Args:
+            year: Year for calculation
+            month: Month for calculation  
+            randomize_small_projects: If True, randomize projects under 20%
+            
+        Returns:
+            DataFrame with daily hours for each project
+        """
+        working_days = self.get_working_days(year, month)
+        
+        # Initialize result dataframe
+        result = pd.DataFrame(index=working_days)
+        
+        # Add columns for each project
+        for project in self.projects:
+            project_name = project['name']
+            percentage = project['percentage']
+            total_monthly_hours = project['daily_hours'] * len(working_days)
+            
+            if randomize_small_projects and percentage < 20:
+                # Randomize small projects (under 20%)
+                daily_hours = self._randomize_project_hours(
+                    total_monthly_hours, working_days, project_name
+                )
+            else:
+                # Even distribution
+                daily_hours = [project['daily_hours']] * len(working_days)
+            
+            result[project_name] = daily_hours
+        
+        return result
+    
+    def _randomize_project_hours(self, total_hours, working_days, project_name):
+        """
+        Randomize hours for small projects into concentrated blocks
+        
+        Args:
+            total_hours: Total monthly hours for the project
+            working_days: List of working days in month
+            project_name: Name of the project (for seed consistency)
+            
+        Returns:
+            List of daily hours with randomized distribution
+        """
+        num_days = len(working_days)
+        daily_hours = [0.0] * num_days
+        
+        if total_hours < self.minimum_time_block:
+            # If total hours is less than minimum block, assign to one random day
+            random.seed(f"{project_name}_{num_days}")
+            selected_day = random.randint(0, num_days - 1)
+            daily_hours[selected_day] = total_hours
+            return daily_hours
+        
+        # Calculate how many days we should concentrate the hours into
+        # Use minimum time blocks to determine number of working days needed
+        blocks_needed = max(1, int(total_hours / self.minimum_time_block))
+        concentration_days = min(blocks_needed, num_days // 2)  # Use at most half the days
+        
+        # Randomly select which days get the hours
+        random.seed(f"{project_name}_{num_days}")
+        selected_days = random.sample(range(num_days), concentration_days)
+        
+        # Distribute hours across selected days
+        hours_per_day = total_hours / concentration_days
+        
+        # Round to nearest 30 minutes and adjust for exact total
+        rounded_hours = round(hours_per_day / self.minimum_time_block) * self.minimum_time_block
+        
+        for i, day_idx in enumerate(selected_days):
+            if i == len(selected_days) - 1:  # Last day gets remainder
+                daily_hours[day_idx] = total_hours - sum(daily_hours)
+            else:
+                daily_hours[day_idx] = rounded_hours
+        
+        return daily_hours
+    
+    def export_to_excel(self, year, month, randomize_small_projects=False):
+        """
+        Export timesheet to Excel format
+        
+        Returns:
+            BytesIO object containing Excel file
+        """
+        df = self.get_project_hours_daily(year, month, randomize_small_projects)
+        
+        # Create Excel workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Timesheet_{year}_{month:02d}"
+        
+        # Write headers
+        headers = ["Day"] + list(df.columns) + ["Total Hours"]
+        for col, header in enumerate(headers, 1):
+            ws.cell(row=1, column=col, value=header)
+        
+        # Write data
+        for row_idx, (day, row_data) in enumerate(df.iterrows(), 2):
+            ws.cell(row=row_idx, column=1, value=day)
+            
+            row_total = 0
+            for col_idx, project_name in enumerate(df.columns, 2):
+                hours = row_data[project_name]
+                ws.cell(row=row_idx, column=col_idx, value=hours)
+                row_total += hours
+            
+            # Add daily total
+            ws.cell(row=row_idx, column=len(headers), value=row_total)
+        
+        # Add monthly totals row
+        total_row = len(df) + 2
+        ws.cell(row=total_row, column=1, value="Monthly Total")
+        
+        for col_idx, project_name in enumerate(df.columns, 2):
+            total_hours = df[project_name].sum()
+            ws.cell(row=total_row, column=col_idx, value=total_hours)
+        
+        # Add grand total
+        grand_total = df.sum().sum()
+        ws.cell(row=total_row, column=len(headers), value=grand_total)
+        
+        # Save to BytesIO
+        excel_buffer = BytesIO()
+        wb.save(excel_buffer)
+        excel_buffer.seek(0)
+        
+        return excel_buffer
+
+# Global timesheet manager instance
+timesheet_manager = TimesheetManager()
 
 # ===== Enhanced UI Definition with Separate Donut Chart Cards =====
 app_ui = ui.page_bootstrap(
@@ -1598,7 +1780,6 @@ def server(input, output, session: Session):
                       )
                   ),
                   
-                  # Age Group and Schools Charts side by side
                   ui.div(
                       {"class": "row"},
                       # Age Group Bar Chart (Left side)
@@ -2745,6 +2926,181 @@ def server(input, output, session: Session):
           n_total = len(df.columns)
           n_sel = len(selected) if selected else 0
           return f"{n_sel} of {n_total} columns selected"
+
+      # ===== Timesheet Management Server Functions =====
+      
+      @reactive.Effect
+      @reactive.event(input.add_project)
+      def add_project():
+          name = input.project_name()
+          percentage = input.project_percentage()
+          
+          if not name or not name.strip():
+              ui.notification_show("Project name is required", type="error")
+              return
+              
+          if timesheet_manager.add_project(name.strip(), percentage):
+              ui.notification_show(f"Project '{name}' added successfully", type="success")
+              # Clear inputs
+              ui.update_text("project_name", value="")
+              ui.update_numeric("project_percentage", value=10)
+          else:
+              ui.notification_show("Failed to add project. Check name and percentage allocation.", type="error")
+      
+      @output
+      @render.ui
+      def projects_list():
+          if not timesheet_manager.projects:
+              return ui.p("No projects added yet.", {"class": "text-muted"})
+          
+          project_items = []
+          total_percentage = 0
+          
+          for project in timesheet_manager.projects:
+              total_percentage += project['percentage']
+              project_items.append(
+                  ui.div(
+                      {"class": "d-flex justify-content-between align-items-center mb-2 p-2 border rounded"},
+                      ui.div(
+                          ui.strong(project['name']),
+                          ui.br(),
+                          ui.small(f"{project['percentage']}% ({project['daily_hours']:.2f} hrs/day)", {"class": "text-muted"})
+                      ),
+                      ui.input_action_button(
+                          f"remove_{project['id']}",
+                          ui.tags.i({"class": "fas fa-trash"})
+                      )
+                  )
+              )
+          
+          # Add total percentage display
+          percentage_class = "text-success" if total_percentage <= 100 else "text-danger"
+          project_items.append(
+              ui.div(
+                  {"class": f"mt-3 p-2 border-top {percentage_class}"},
+                  ui.strong(f"Total Allocation: {total_percentage}%")
+              )
+          )
+          
+          return ui.div(*project_items)
+      
+      # Handle project removal
+      @reactive.Effect
+      def handle_project_removal():
+          for project in timesheet_manager.projects:
+              remove_id = f"remove_{project['id']}"
+              if hasattr(input, remove_id) and input[remove_id]():
+                  timesheet_manager.remove_project(project['id'])
+                  ui.notification_show(f"Project '{project['name']}' removed", type="info")
+                  break
+      
+      @reactive.Value
+      def timesheet_data():
+          return pd.DataFrame()
+      
+      @reactive.Effect
+      @reactive.event(input.generate_timesheet)
+      def generate_timesheet():
+          if not timesheet_manager.projects:
+              ui.notification_show("Please add projects first", type="warning")
+              return
+              
+          year = int(input.timesheet_year())
+          month = int(input.timesheet_month())
+          randomize = input.randomize_small()
+          
+          try:
+              df = timesheet_manager.get_project_hours_daily(year, month, randomize)
+              timesheet_data.set(df)
+              ui.notification_show("Timesheet generated successfully", type="success")
+          except Exception as e:
+              ui.notification_show(f"Error generating timesheet: {str(e)}", type="error")
+      
+      @output
+      @render.ui
+      def timesheet_display():
+          df = timesheet_data.get()
+          
+          if df.empty:
+              return ui.div(
+                  ui.p("Generate a timesheet to view the daily distribution.", {"class": "text-muted text-center"})
+              )
+          
+          # Create table
+          table_rows = []
+          
+          # Header row
+          headers = ["Day"] + list(df.columns) + ["Daily Total"]
+          header_row = ui.tags.tr(
+              *[ui.tags.th(header, {"class": "text-center"}) for header in headers]
+          )
+          table_rows.append(header_row)
+          
+          # Data rows
+          for day, row_data in df.iterrows():
+              daily_total = row_data.sum()
+              cells = [ui.tags.td(str(day), {"class": "text-center fw-bold"})]
+              
+              for project_name in df.columns:
+                  hours = row_data[project_name]
+                  hours_str = f"{hours:.2f}" if hours > 0 else "-"
+                  cell_class = "text-center" + (" fw-bold" if hours > 0 else " text-muted")
+                  cells.append(ui.tags.td(hours_str, {"class": cell_class}))
+              
+              # Daily total
+              cells.append(ui.tags.td(f"{daily_total:.2f}", {"class": "text-center fw-bold"}))
+              
+              table_rows.append(ui.tags.tr(*cells))
+          
+          # Monthly totals row
+          totals_cells = [ui.tags.td("Monthly Total", {"class": "text-center fw-bold"})]
+          for project_name in df.columns:
+              total_hours = df[project_name].sum()
+              totals_cells.append(ui.tags.td(f"{total_hours:.2f}", {"class": "text-center fw-bold"}))
+          
+          grand_total = df.sum().sum()
+          totals_cells.append(ui.tags.td(f"{grand_total:.2f}", {"class": "text-center fw-bold"}))
+          table_rows.append(ui.tags.tr(*totals_cells, {"class": "table-info"}))
+          
+          return ui.div(
+              ui.h6("Daily Timesheet", {"class": "mb-3"}),
+              ui.div(
+                  ui.tags.table(
+                      ui.tags.thead(table_rows[0]),
+                      ui.tags.tbody(*table_rows[1:]),
+                      {"class": "table table-striped table-hover"}
+                  ),
+                  {"class": "table-responsive"}
+              )
+          )
+      
+      @output
+      @render.text
+      def project_message():
+          total_percentage = sum(p['percentage'] for p in timesheet_manager.projects)
+          if total_percentage > 100:
+              return "⚠️ Total allocation exceeds 100%"
+          elif total_percentage == 100:
+              return "✅ Perfect allocation (100%)"
+          else:
+              return f"Current allocation: {total_percentage}%"
+      
+      @output
+      @render.download(filename=lambda: f"timesheet_{input.timesheet_year()}_{input.timesheet_month():02d}.xlsx")
+      def download_excel():
+          if not timesheet_manager.projects:
+              return b""
+              
+          year = int(input.timesheet_year())
+          month = int(input.timesheet_month())
+          randomize = input.randomize_small()
+          
+          try:
+              excel_buffer = timesheet_manager.export_to_excel(year, month, randomize)
+              return excel_buffer.getvalue()
+          except Exception as e:
+              ui.notification_show(f"Error generating Excel: {str(e)}", type="error")
+              return b""
 
 def open_browser():
     url = "http://127.0.0.1:8000"
