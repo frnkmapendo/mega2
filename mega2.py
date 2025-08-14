@@ -10,8 +10,9 @@ from palmerpenguins import load_penguins
 import time
 from datetime import datetime
 from shiny import App, ui, render, reactive, Session
-from shinywidgets import output_widget, render_widget
-from ipyleaflet import Map, Marker, MarkerCluster, Popup, basemaps, CircleMarker, Icon, AwesomeIcon, TileLayer
+# Google Maps integration replaces shinywidgets dependency
+# Google Maps integration (removed ipyleaflet dependency)
+# from ipyleaflet import Map, Marker, MarkerCluster, Popup, basemaps, CircleMarker, Icon, AwesomeIcon, TileLayer
 
 # ===== Configure Logging =====
 logging.basicConfig(
@@ -181,6 +182,8 @@ app_ui = ui.page_bootstrap(
         ui.tags.script(src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"),
         ui.tags.link(rel="stylesheet", href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"),
         ui.tags.link(rel="stylesheet", href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"),
+        # Google Maps JavaScript API - Replace YOUR_API_KEY with your actual API key
+        ui.tags.script({"src": "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=geometry,places&callback=initGoogleMaps", "async": True, "defer": True}),
         ui.tags.script("""
         function saveToken(token) {
             sessionStorage.setItem('odk_token', token);
@@ -288,6 +291,233 @@ app_ui = ui.page_bootstrap(
         $(document).ready(function() {
             setTimeout(updateSelectedCount, 500);
         });
+        """),
+        
+        # Google Maps JavaScript functionality
+        ui.tags.script("""
+        // Global variables for Google Maps
+        let map;
+        let streetView;
+        let markers = [];
+        let currentMode = 'map'; // 'map' or 'streetview'
+        let coordinatesOverlay;
+        let mapData = [];
+
+        // Initialize Google Maps (called by API callback)
+        function initGoogleMaps() {
+            console.log('Google Maps API loaded');
+            // Map initialization will happen when data is loaded
+        }
+
+        // Initialize the map with data
+        function initializeMapWithData(data) {
+            console.log('Initializing map with data:', data);
+            mapData = data;
+            
+            if (!data || data.length === 0) {
+                document.getElementById('google-map-container').innerHTML = 
+                    '<div style="display: flex; align-items: center; justify-content: center; height: 100%; background: #f5f5f5; color: #666;"><h4>No GPS coordinates found</h4></div>';
+                return;
+            }
+
+            // Calculate map center from data
+            const bounds = new google.maps.LatLngBounds();
+            data.forEach(point => {
+                bounds.extend(new google.maps.LatLng(point.lat, point.lng));
+            });
+
+            // Initialize map
+            map = new google.maps.Map(document.getElementById('google-map'), {
+                center: bounds.getCenter(),
+                zoom: data.length === 1 ? 15 : 10,
+                mapTypeId: google.maps.MapTypeId.ROADMAP,
+                mapTypeControl: true,
+                mapTypeControlOptions: {
+                    style: google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+                    position: google.maps.ControlPosition.TOP_CENTER,
+                },
+                zoomControl: true,
+                streetViewControl: true,
+                fullscreenControl: true,
+                gestureHandling: 'cooperative'
+            });
+
+            // Initialize Street View
+            streetView = new google.maps.StreetViewPanorama(
+                document.getElementById('street-view'), {
+                    position: bounds.getCenter(),
+                    pov: { heading: 165, pitch: 0 },
+                    zoom: 1,
+                    addressControl: false,
+                    linksControl: true,
+                    panControl: true,
+                    enableCloseButton: false
+                }
+            );
+
+            // Fit map to show all markers
+            if (data.length > 1) {
+                map.fitBounds(bounds);
+            }
+
+            // Add markers
+            addMarkersToMap(data);
+
+            // Add coordinate tracking
+            addCoordinateTracking();
+
+            // Add map controls
+            addMapControls();
+        }
+
+        // Add markers to the map
+        function addMarkersToMap(data) {
+            // Clear existing markers
+            markers.forEach(marker => marker.setMap(null));
+            markers = [];
+
+            data.forEach(point => {
+                // Determine marker color based on sample type
+                let markerColor = '#4285F4'; // Default blue
+                if (point.sample === 'Public school') {
+                    markerColor = '#34A853'; // Green
+                } else if (point.sample === 'Out of school') {
+                    markerColor = '#FF9800'; // Orange
+                }
+
+                // Create custom marker icon
+                const markerIcon = {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    fillColor: markerColor,
+                    fillOpacity: 0.8,
+                    strokeColor: '#FFFFFF',
+                    strokeWeight: 2,
+                    scale: 8
+                };
+
+                // Create marker
+                const marker = new google.maps.Marker({
+                    position: { lat: point.lat, lng: point.lng },
+                    map: map,
+                    icon: markerIcon,
+                    title: point.school || 'Location'
+                });
+
+                // Create info window content
+                let infoContent = '<div class="custom-info-window">';
+                if (point.school) {
+                    infoContent += `<h4>${point.school}</h4>`;
+                }
+                if (point.sample) {
+                    infoContent += `<div><strong>Sample:</strong> ${point.sample}</div>`;
+                }
+                if (point.sex) {
+                    infoContent += `<div><strong>Sex:</strong> ${point.sex}</div>`;
+                }
+                if (point.age_group) {
+                    infoContent += `<div><strong>Age Group:</strong> ${point.age_group}</div>`;
+                }
+                infoContent += `<div><strong>Coordinates:</strong> ${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}</div>`;
+                infoContent += `<div style="margin-top: 10px;"><button onclick="showStreetView(${point.lat}, ${point.lng})" style="background: #4285F4; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer;">Street View</button></div>`;
+                infoContent += '</div>';
+
+                const infoWindow = new google.maps.InfoWindow({
+                    content: infoContent
+                });
+
+                // Add click listener to marker
+                marker.addListener('click', () => {
+                    infoWindow.open(map, marker);
+                });
+
+                // Add double-click listener for street view
+                marker.addListener('dblclick', () => {
+                    showStreetView(point.lat, point.lng);
+                });
+
+                markers.push(marker);
+            });
+        }
+
+        // Add coordinate tracking
+        function addCoordinateTracking() {
+            coordinatesOverlay = document.querySelector('.gps-coordinates-overlay');
+            if (!coordinatesOverlay) {
+                coordinatesOverlay = document.createElement('div');
+                coordinatesOverlay.className = 'gps-coordinates-overlay';
+                document.getElementById('google-map-container').appendChild(coordinatesOverlay);
+            }
+
+            // Update coordinates on mouse move
+            map.addListener('mousemove', (event) => {
+                const lat = event.latLng.lat().toFixed(6);
+                const lng = event.latLng.lng().toFixed(6);
+                coordinatesOverlay.innerHTML = `Lat: ${lat}, Lng: ${lng}`;
+            });
+
+            // Update coordinates on street view pan
+            streetView.addListener('pov_changed', () => {
+                const position = streetView.getPosition();
+                if (position) {
+                    const lat = position.lat().toFixed(6);
+                    const lng = position.lng().toFixed(6);
+                    coordinatesOverlay.innerHTML = `Lat: ${lat}, Lng: ${lng}`;
+                }
+            });
+        }
+
+        // Add map controls
+        function addMapControls() {
+            const controlsDiv = document.createElement('div');
+            controlsDiv.className = 'map-controls';
+            
+            const mapBtn = document.createElement('button');
+            mapBtn.textContent = 'Map View';
+            mapBtn.onclick = () => toggleView('map');
+            mapBtn.className = 'active';
+            
+            const streetBtn = document.createElement('button');
+            streetBtn.textContent = 'Street View';
+            streetBtn.onclick = () => toggleView('streetview');
+            
+            controlsDiv.appendChild(mapBtn);
+            controlsDiv.appendChild(streetBtn);
+            
+            document.getElementById('google-map-container').appendChild(controlsDiv);
+        }
+
+        // Toggle between map and street view
+        function toggleView(mode) {
+            const mapDiv = document.getElementById('google-map');
+            const streetDiv = document.getElementById('street-view');
+            const buttons = document.querySelectorAll('.map-controls button');
+            
+            buttons.forEach(btn => btn.classList.remove('active'));
+            
+            if (mode === 'map') {
+                mapDiv.style.display = 'block';
+                streetDiv.style.display = 'none';
+                buttons[0].classList.add('active');
+                currentMode = 'map';
+            } else {
+                mapDiv.style.display = 'none';
+                streetDiv.style.display = 'block';
+                buttons[1].classList.add('active');
+                currentMode = 'streetview';
+            }
+        }
+
+        // Show street view at specific coordinates
+        function showStreetView(lat, lng) {
+            streetView.setPosition(new google.maps.LatLng(lat, lng));
+            toggleView('streetview');
+        }
+
+        // Make functions globally available
+        window.initGoogleMaps = initGoogleMaps;
+        window.initializeMapWithData = initializeMapWithData;
+        window.showStreetView = showStreetView;
+        window.toggleView = toggleView;
         """),
         ui.tags.style("""
             /* Enhanced Bootstrap Integration with Separate Donut Chart Cards */
@@ -493,6 +723,123 @@ app_ui = ui.page_bootstrap(
             .map-card .card-body {
                 min-height: 500px !important;
                 padding: 0 !important; /* Remove padding for map to fill space */
+                position: relative;
+            }
+            
+            /* Google Maps container styles */
+            #google-map-container {
+                width: 100%;
+                height: 500px;
+                min-height: 500px;
+                position: relative;
+                border-radius: 0 0 8px 8px;
+            }
+            
+            #google-map {
+                width: 100%;
+                height: 100%;
+                border-radius: 0 0 8px 8px;
+            }
+            
+            #street-view {
+                width: 100%;
+                height: 100%;
+                border-radius: 0 0 8px 8px;
+                display: none;
+            }
+            
+            /* Map controls overlay */
+            .map-controls {
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                z-index: 1000;
+                background: white;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                padding: 10px;
+            }
+            
+            .map-controls button {
+                margin: 2px;
+                padding: 8px 12px;
+                border: none;
+                border-radius: 4px;
+                background: #0288D1;
+                color: white;
+                cursor: pointer;
+                font-size: 12px;
+                transition: background 0.3s;
+            }
+            
+            .map-controls button:hover {
+                background: #0277BD;
+            }
+            
+            .map-controls button.active {
+                background: #FF5722;
+            }
+            
+            /* GPS coordinate display overlay */
+            .gps-coordinates-overlay {
+                position: absolute;
+                bottom: 10px;
+                left: 10px;
+                z-index: 1000;
+                background: rgba(0, 0, 0, 0.8);
+                color: white;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-family: monospace;
+                font-size: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }
+            
+            /* Info window styles */
+            .custom-info-window {
+                max-width: 300px;
+                padding: 10px;
+            }
+            
+            .custom-info-window h4 {
+                margin: 0 0 10px 0;
+                color: #0288D1;
+                font-size: 16px;
+            }
+            
+            .custom-info-window div {
+                margin: 5px 0;
+                font-size: 14px;
+            }
+            
+            .custom-info-window strong {
+                color: #333;
+            }
+            
+            /* Responsive adjustments */
+            @media (max-width: 768px) {
+                #google-map-container {
+                    height: 400px;
+                    min-height: 400px;
+                }
+                
+                .map-controls {
+                    top: 5px;
+                    left: 5px;
+                    padding: 5px;
+                }
+                
+                .map-controls button {
+                    padding: 6px 8px;
+                    font-size: 11px;
+                }
+                
+                .gps-coordinates-overlay {
+                    bottom: 5px;
+                    left: 5px;
+                    font-size: 11px;
+                    padding: 6px 8px;
+                }
             }
             
             /* Specialized Donut Chart Card Headers */
@@ -893,11 +1240,11 @@ app_ui = ui.page_bootstrap(
             ui.img(
                 src="https://aaph.or.tz/sites/default/files/AAPHlogo.png",
                 alt="AAPH Logo",
-                class_="logo-image"
+                **{"class": "logo-image"}
             ),
             ui.div(
-                {"class": "logo-text"},
-                "MEGA 2.0 Dashboard"
+                "MEGA 2.0 Dashboard",
+                **{"class": "logo-text"}
             )
         )
     ),
@@ -906,8 +1253,8 @@ app_ui = ui.page_bootstrap(
     
     # Version info with updated timestamp and username
     ui.div(
-        {"class": "version-info"},
-        f"Version 2.1.0 | Last update: 2025-06-23 11:40:14 | User: frnkmapendo"
+        "Version 2.1.0 | Last update: 2025-06-23 11:40:14 | User: frnkmapendo",
+        **{"class": "version-info"}
     )
 )
 
@@ -1687,7 +2034,7 @@ def server(input, output, session: Session):
                               ),
                               ui.div(
                                   {"class": "card-body"},
-                                  output_widget("location_map"),
+                                  ui.output_ui("location_map"),
                                   ui.output_ui("gps_info_box")  # New: Add GPS info display
                               )
                           )
@@ -2392,28 +2739,13 @@ def server(input, output, session: Session):
               )
               return fig
   
-      # Updated Map visualization function using ipyleaflet with GPS columns from form
+      # Updated Map visualization function using Google Maps API
       @output
-      @render_widget
+      @render.ui
       def location_map():
-          from ipyleaflet import Map, Marker, MarkerCluster, Popup, basemaps, CircleMarker, Icon, AwesomeIcon
-          
           df = filtered_df()
           gps_columns = gps_columns_value.get()
           paired_coords = paired_coordinates_value.get()
-          
-          # Default center coordinates (Tanzania)
-          center_lat = -6.8
-          center_lon = 39.2
-          zoom_level = 6
-          
-          # Initialize the map
-          m = Map(
-              center=(center_lat, center_lon),
-              zoom=zoom_level,
-              basemap=basemaps.OpenStreetMap.Mapnik,
-              scroll_wheel_zoom=True
-          )
           
           # Function to extract latitude and longitude from GPS string
           def extract_lat_lon(gps_string):
@@ -2431,15 +2763,15 @@ def server(input, output, session: Session):
               except (ValueError, TypeError):
                   pass
               return None, None
-              
-              # Check for paired coordinate columns like the ones specified
-              has_patietn_health_coords = False
-              lat_col = "patietn_health-gps_location_Latitude"
-              lon_col = "patietn_health-gps_location_Longitude"
+          
+          # Collect GPS data for the map
+          map_data = []
+          
+          # Check for paired coordinate columns like the ones specified
+          lat_col = "patietn_health-gps_location_Latitude"
+          lon_col = "patietn_health-gps_location_Longitude"
           
           if lat_col in df.columns and lon_col in df.columns:
-              has_patietn_health_coords = True
-              
               # Create a copy of the DataFrame for mapping
               map_df = df.copy()
               
@@ -2451,228 +2783,92 @@ def server(input, output, session: Session):
               map_df = map_df.dropna(subset=[lat_col, lon_col])
               
               if len(map_df) > 0:
-                  # Calculate the center of the map from the data
-                  center_lat = map_df[lat_col].mean()
-                  center_lon = map_df[lon_col].mean()
-                  m.center = (center_lat, center_lon)
-                  m.zoom = 10
-                  
-                  # Create markers for each location
-                  markers = []
-                  
                   for idx, row in map_df.iterrows():
-                      # Create popup content with available information
-                      popup_content = "<div class='marker-popup-content'>"
-                      
-                      if "school" in row:
-                          popup_content += f"<h4>{row['school']}</h4>"
-                      
-                      if "sample" in row:
-                          popup_content += f"<div><strong>Sample:</strong> {row['sample']}</div>"
-                      
-                      if "A04" in row:  # Sex information
-                          popup_content += f"<div><strong>Sex:</strong> {row['A04']}</div>"
-                      
-                      if "age_group" in row:
-                          popup_content += f"<div><strong>Age Group:</strong> {row['age_group']}</div>"
-                          
-                      # Add GPS coordinates to popup
-                      popup_content += f"<div><strong>Coordinates:</strong> {row[lat_col]}, {row[lon_col]}</div>"
-                          
-                      popup_content += "</div>"
-                      
-                      # Create marker with popup
-                      marker_color = 'blue'
-                      if "sample" in row:
-                          if row["sample"] == "Public school":
-                              marker_color = 'green'
-                          elif row["sample"] == "Out of school":
-                              marker_color = 'orange'
-                              
-                      # Use CircleMarker for better visibility
-                      marker = CircleMarker(
-                          location=(row[lat_col], row[lon_col]),
-                          radius=8,
-                          color=marker_color,
-                          fill_color=marker_color,
-                          fill_opacity=0.7,
-                          popup=Popup(
-                              html=popup_content,
-                              max_width=300,
-                              close_button=True
-                          )
-                      )
-                      markers.append(marker)
-                  
-                  # If we have many markers, use a marker cluster for better performance
-                  if len(markers) > 100:
-                      marker_cluster = MarkerCluster(markers=markers)
-                      m.add(marker_cluster)
-                  else:
-                      # Add all markers to the map
-                      for marker in markers:
-                          m.add(marker)
-                  
-                  # Add scale control
-                  from ipyleaflet import ScaleControl
-                  m.add(ScaleControl(position="bottomleft"))
-                  
-                  # Add fullscreen control
-                  from ipyleaflet import FullScreenControl
-                  m.add(FullScreenControl())
-                  
-                  # Add layer control to switch between different basemaps
-                  from ipyleaflet import LayersControl
-                  m.add(LayersControl(position="topright"))
-                  
-                  # Add a different basemap as an option
-                  from ipyleaflet import TileLayer
-                  satellite = TileLayer(
-                      url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                      attribution="Esri World Imagery",
-                      name="Satellite"
-                  )
-                  m.add(satellite)
-                  return m
+                      point_data = {
+                          'lat': float(row[lat_col]),
+                          'lng': float(row[lon_col]),
+                          'school': row.get('school', ''),
+                          'sample': row.get('sample', ''),
+                          'sex': row.get('A04', ''),
+                          'age_group': row.get('age_group', '')
+                      }
+                      map_data.append(point_data)
           
-          # If we didn't find or couldn't use the specific patient health GPS columns, try other approaches
-          if not has_patietn_health_coords and gps_columns:
-              # We have GPS data available, try to plot it
+          # If we didn't find paired coordinates, try other approaches
+          elif gps_columns:
               map_df = df.copy()
-              coordinates = []
               
               # Check for other paired coordinates
-              for lat_col, lon_col in paired_coords.items():
-                  if lat_col in df.columns and lon_col in df.columns:
-                      map_df["latitude"] = pd.to_numeric(map_df[lat_col], errors='coerce')
-                      map_df["longitude"] = pd.to_numeric(map_df[lon_col], errors='coerce')
+              for lat_col_alt, lon_col_alt in paired_coords.items():
+                  if lat_col_alt in df.columns and lon_col_alt in df.columns:
+                      map_df["latitude"] = pd.to_numeric(map_df[lat_col_alt], errors='coerce')
+                      map_df["longitude"] = pd.to_numeric(map_df[lon_col_alt], errors='coerce')
                       
                       # Drop rows with missing coordinates
                       valid_coords = map_df.dropna(subset=["latitude", "longitude"])
                       
                       for idx, row in valid_coords.iterrows():
-                          coordinates.append((idx, row["latitude"], row["longitude"]))
+                          point_data = {
+                              'lat': float(row["latitude"]),
+                              'lng': float(row["longitude"]),
+                              'school': row.get('school', ''),
+                              'sample': row.get('sample', ''),
+                              'sex': row.get('A04', ''),
+                              'age_group': row.get('age_group', '')
+                          }
+                          map_data.append(point_data)
                       
-                      if coordinates:
+                      if map_data:
                           break
               
               # If no paired coordinates, try columns with combined GPS format
-              if not coordinates:
+              if not map_data:
                   for col in gps_columns:
                       if col in paired_coords or col in paired_coords.values():
                           continue
                           
-                      map_df["latitude"] = None
-                      map_df["longitude"] = None
-                      
                       for idx, row in map_df.iterrows():
                           lat, lon = extract_lat_lon(row[col])
                           if lat is not None and lon is not None:
-                              map_df.at[idx, "latitude"] = lat
-                              map_df.at[idx, "longitude"] = lon
-                              coordinates.append((idx, lat, lon))
+                              point_data = {
+                                  'lat': lat,
+                                  'lng': lon,
+                                  'school': row.get('school', ''),
+                                  'sample': row.get('sample', ''),
+                                  'sex': row.get('A04', ''),
+                                  'age_group': row.get('age_group', '')
+                              }
+                              map_data.append(point_data)
                       
-                      if coordinates:
+                      if map_data:
                           break
-              
-              # If we have coordinates, update the map
-              if coordinates:
-                  # Calculate the center of the map from the data
-                  lats = [lat for _, lat, _ in coordinates]
-                  lons = [lon for _, _, lon in coordinates]
-                  center_lat = sum(lats) / len(lats)
-                  center_lon = sum(lons) / len(lons)
-                  m.center = (center_lat, center_lon)
-                  m.zoom = 10
-                  
-                  # Create markers for each location
-                  markers = []
-                  
-                  for idx, lat, lon in coordinates:
-                      row = map_df.iloc[idx]
-                      
-                      # Create popup content with available information
-                      popup_content = "<div class='marker-popup-content'>"
-                      
-                      if "school" in row:
-                          popup_content += f"<h4>{row['school']}</h4>"
-                      
-                      if "sample" in row:
-                          popup_content += f"<div><strong>Sample:</strong> {row['sample']}</div>"
-                      
-                      if "A04" in row:  # Sex information
-                          popup_content += f"<div><strong>Sex:</strong> {row['A04']}</div>"
-                      
-                      if "age_group" in row:
-                          popup_content += f"<div><strong>Age Group:</strong> {row['age_group']}</div>"
-                          
-                      # Add GPS coordinates to popup
-                      popup_content += f"<div><strong>Coordinates:</strong> {lat}, {lon}</div>"
-                          
-                      popup_content += "</div>"
-                      
-                      # Create marker with popup
-                      marker_color = 'blue'
-                      if "sample" in row:
-                          if row["sample"] == "Public school":
-                              marker_color = 'green'
-                          elif row["sample"] == "Out of school":
-                              marker_color = 'orange'
-                              
-                      # Use CircleMarker for better visibility
-                      marker = CircleMarker(
-                          location=(lat, lon),
-                          radius=8,
-                          color=marker_color,
-                          fill_color=marker_color,
-                          fill_opacity=0.7,
-                          popup=Popup(
-                              html=popup_content,
-                              max_width=300,
-                              close_button=True
-                          )
-                      )
-                      markers.append(marker)
-                  
-                  # If we have many markers, use a marker cluster for better performance
-                  if len(markers) > 100:
-                      marker_cluster = MarkerCluster(markers=markers)
-                      m.add(marker_cluster)
-                  else:
-                      # Add all markers to the map
-                      for marker in markers:
-                          m.add(marker)
-                  
-                  # Add scale control
-                  from ipyleaflet import ScaleControl
-                  m.add(ScaleControl(position="bottomleft"))
-                  
-                  # Add fullscreen control
-                  from ipyleaflet import FullScreenControl
-                  m.add(FullScreenControl())
-                  
-                  # Add layer control to switch between different basemaps
-                  from ipyleaflet import LayersControl
-                  m.add(LayersControl(position="topright"))
-                  
-                  # Add a different basemap as an option
-                  from ipyleaflet import TileLayer
-                  satellite = TileLayer(
-                      url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                      attribution="Esri World Imagery",
-                      name="Satellite"
-                  )
-                  m.add(satellite)
-                  return m
-                  
-          # If we couldn't find valid coordinates, show an appropriate message
-          from ipyleaflet import Popup
-          popup = Popup(
-              html="<div style='text-align: center; padding: 10px;'><h4>No valid GPS coordinates found</h4></div>",
-              close_button=True
+          
+          # Create the HTML for Google Maps
+          map_html = ui.div(
+              {"id": "google-map-container"},
+              ui.div({"id": "google-map"}),
+              ui.div({"id": "street-view"}),
+              ui.tags.script(f"""
+              // Initialize map when data is available
+              if (typeof google !== 'undefined' && google.maps) {{
+                  setTimeout(function() {{
+                      initializeMapWithData({map_data});
+                  }}, 100);
+              }} else {{
+                  // Wait for Google Maps API to load
+                  function checkGoogleMaps() {{
+                      if (typeof google !== 'undefined' && google.maps) {{
+                          initializeMapWithData({map_data});
+                      }} else {{
+                          setTimeout(checkGoogleMaps, 500);
+                      }}
+                  }}
+                  checkGoogleMaps();
+              }}
+              """)
           )
-          m.add(popup)
-          return m
+          
+          return map_html
   
       # Additional statistics for sample distribution
       @output
