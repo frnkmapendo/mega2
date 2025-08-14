@@ -1089,6 +1089,10 @@ class FixedODKDashboardGUI:
         self.setup_ui()
         
     def setup_ui(self):
+        # Configure root window for proper expansion
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
         # Create main container with scrollable frame
         main_canvas = tk.Canvas(self.root)
         scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=main_canvas.yview)
@@ -1099,8 +1103,22 @@ class FixedODKDashboardGUI:
             lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
         )
         
+        # Create window in canvas and configure for expansion
         main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         main_canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Bind canvas resize to update scroll region
+        def configure_scroll_region(event=None):
+            main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+            # Update canvas window width to match canvas width
+            canvas_width = main_canvas.winfo_width()
+            if canvas_width > 1:  # Ensure canvas has been properly initialized
+                canvas_items = main_canvas.find_all()
+                if canvas_items:
+                    main_canvas.itemconfig(canvas_items[0], width=canvas_width)
+        
+        main_canvas.bind("<Configure>", configure_scroll_region)
+        scrollable_frame.bind("<Configure>", configure_scroll_region)
         
         # Title
         title_frame = ttk.Frame(scrollable_frame)
@@ -1294,9 +1312,9 @@ class FixedODKDashboardGUI:
         self.output_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Pack scrollable components
-        main_canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        # Grid scrollable components for proper window filling
+        main_canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
         
         # Bind mousewheel to canvas
         def _on_mousewheel(event):
