@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""
-ODK Central Dashboard Reporter - Fixed High-Quality Image Handling
-Generate modern dashboard reports in PDF format with high-quality header images
-
-Author: Frank Mapendo
-Date: 2025-08-14
-Version: 2.2.1
-"""
-
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
@@ -47,7 +37,7 @@ try:
     plt.style.use('default')
     plt.rcParams['figure.facecolor'] = 'white'
     plt.rcParams['axes.facecolor'] = 'white'
-    plt.rcParams['font.size'] = 10
+    plt.rcParams['font.size'] = 12
     
     HAS_MATPLOTLIB = True
 except ImportError:
@@ -78,8 +68,7 @@ except ImportError:
         def __exit__(self, *args): pass
 
 # Updated constants with current values
-CURRENT_USER = "frnkmapendo"
-CURRENT_DATETIME = "2025-08-14 08:47:11"
+CURRENT_USER = os.getlogin()
 
 # Global list to track temporary files for cleanup
 _temp_files_to_cleanup = []
@@ -604,13 +593,13 @@ class FixedHighQualityDashboardPDFReporter:
             logging.error(f"Error setting up styles: {e}")
     
     def generate_dashboard_report(self, output_path: str, title: str = "ODK Central Dashboard Report") -> bool:
-        """Generate comprehensive dashboard report with fixed high-quality header image."""
+        """Generate comprehensive dashboard report with header image."""
         try:
-            logging.info(f"Starting fixed high-quality PDF generation to: {output_path}")
+            logging.info(f"PDF generation to: {output_path}")
             
             # Pre-process header image if provided
             if self.header_image_path and HighQualityImageProcessor.validate_image(self.header_image_path):
-                logging.info("Pre-processing header image for stable file handling...")
+                logging.info("Pre-processing header image...")
                 self.optimized_image_path = HighQualityImageProcessor.optimize_image_for_pdf(
                     self.header_image_path, 
                     max_width=600,
@@ -653,7 +642,7 @@ class FixedHighQualityDashboardPDFReporter:
             # Build the PDF
             doc.build(story)
             
-            logging.info("Fixed high-quality PDF generation completed successfully")
+            logging.info("PDF generation completed successfully")
             
             # Clean up temp files after successful PDF generation
             cleanup_temp_files()
@@ -667,7 +656,7 @@ class FixedHighQualityDashboardPDFReporter:
             return False
     
     def _create_fixed_header_image(self) -> List:
-        """Create fixed header image section with proper file handling."""
+        """Create header image section with proper file handling."""
         story = []
         
         try:
@@ -706,7 +695,7 @@ class FixedHighQualityDashboardPDFReporter:
                 story.append(header_image)
                 story.append(Spacer(1, 20))
                 
-                logging.info(f"Added fixed high-quality header image: {width_inches:.2f}x{height_inches:.2f} inches")
+                logging.info(f"Added header image: {width_inches:.2f}x{height_inches:.2f} inches")
                 
             except Exception as img_error:
                 logging.error(f"Error creating ReportLab Image: {img_error}")
@@ -735,8 +724,8 @@ class FixedHighQualityDashboardPDFReporter:
                     story.append(Spacer(1, 20))
             
         except Exception as e:
-            logging.error(f"Error creating fixed header image: {e}")
-        
+            logging.error(f"Error creating header image: {e}")
+
         return story
     
     def _create_dashboard_header(self, title: str) -> List:
@@ -820,7 +809,7 @@ class FixedHighQualityDashboardPDFReporter:
         story = []
         
         try:
-            story.append(Paragraph("📊 Key Metrics Overview", self.styles['SectionHeader']))
+            story.append(Paragraph("📊 Key Report Overview", self.styles['SectionHeader']))
             
             completion_stats = self.analytics.get_completion_stats()
             recent_activity = self.analytics.get_recent_activity(7)
@@ -925,11 +914,11 @@ class FixedHighQualityDashboardPDFReporter:
         return story
     
     def _create_dashboard_charts(self) -> List:
-        """Create modern dashboard-style charts with fixed matplotlib warnings."""
+        """Create modern dashboard-style charts with matplotlib warnings."""
         story = []
         
         try:
-            story.append(Paragraph("📈 Visual Analytics", self.styles['SectionHeader']))
+            story.append(Paragraph("📈 Visual Analysis", self.styles['SectionHeader']))
             
             # Daily submissions chart
             daily_chart = self._create_modern_daily_chart()
@@ -1011,7 +1000,7 @@ class FixedHighQualityDashboardPDFReporter:
             return None
     
     def _create_weekly_pattern_chart(self) -> Optional[Image]:
-        """Create weekly pattern bar chart with fixed string handling."""
+        """Create weekly pattern bar chart with string handling."""
         try:
             weekly_data = self.analytics.get_weekly_trend()
             if not weekly_data or 'weekday_counts' not in weekly_data:
@@ -1074,14 +1063,14 @@ class FixedHighQualityDashboardPDFReporter:
             return None
 
 # ============================================================================
-# Enhanced GUI Application with Fixed Image Support
+# Enhanced GUI Application with Image Support
 # ============================================================================
 
 class FixedODKDashboardGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("ODK Central Dashboard Reporter - Fixed High Quality")
-        self.root.geometry("850x750")
+        self.root.title("Dashboard Reporter")
+        self.root.geometry("850x850")
         self.root.resizable(True, True)
         
         # Variables
@@ -1095,8 +1084,8 @@ class FixedODKDashboardGUI:
         
         # Style
         self.style = ttk.Style()
-        self.style.theme_use('clam')
-        
+        self.style.theme_use('classic')
+
         self.setup_ui()
         
     def setup_ui(self):
@@ -1117,24 +1106,16 @@ class FixedODKDashboardGUI:
         title_frame = ttk.Frame(scrollable_frame)
         title_frame.pack(fill=tk.X, padx=20, pady=20)
         
-        title_label = ttk.Label(title_frame, text="🚀 ODK Central Dashboard Reporter - Fixed Version", 
-                               font=("Arial", 18, "bold"))
+        title_label = ttk.Label(title_frame, text="🚀 ODK Central Dashboard Reporter",
+                                foreground="#810303",
+                                font=("Helvetica", 18, "bold"))
         title_label.pack()
-        
-        subtitle_label = ttk.Label(title_frame, text="Fixed high-quality PNG/JPG header images with stable file handling", 
-                                  font=("Arial", 10))
-        subtitle_label.pack(pady=(5, 0))
-        
+     
         # Version and date info
-        info_label = ttk.Label(title_frame, text=f"Version 2.2.1 | {CURRENT_DATETIME} UTC | User: {CURRENT_USER}", 
-                              font=("Arial", 8), foreground="gray")
+        info_label = ttk.Label(title_frame, text=f"Version 2.2.1 | User: {CURRENT_USER}", 
+                              font=("Helvetica", 8), foreground="darkblue")
         info_label.pack(pady=(5, 0))
-        
-        # Fix notice
-        fix_notice = ttk.Label(title_frame, text="🔧 FIXED: Temporary file handling for header images", 
-                              font=("Arial", 9), foreground="green")
-        fix_notice.pack(pady=(5, 0))
-        
+                
         # ODK Central Settings
         odk_frame = ttk.LabelFrame(scrollable_frame, text="🔐 ODK Central Connection", padding="15")
         odk_frame.pack(fill=tk.X, padx=20, pady=10)
@@ -1161,13 +1142,24 @@ class FixedODKDashboardGUI:
         
         # Test connection button
         test_btn = ttk.Button(odk_frame, text="🔍 Test Connection", command=self.test_connection)
-        test_btn.grid(row=4, column=1, sticky=tk.W, pady=10, padx=(10, 0))
-        
+        test_btn.config(style='Accent.TButton')
+        self.style.configure('Accent.TButton',
+                              background="#1D15BE",
+                              foreground='white',
+                              font=('Helvetica', 10, 'bold'))
+        self.style.map('Accent.TButton',
+                       background=[('active', '#1F5F7A'),
+                                   ('pressed', "#7F0909")])
+
+        test_btn.grid(row=4, column=1, sticky=tk.W, pady=10, padx=(10, 0))        
         odk_frame.columnconfigure(1, weight=1)
         
         # Form Selection
         form_frame = ttk.LabelFrame(scrollable_frame, text="📋 Form Selection", padding="15")
         form_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        # Configure style for colored text in the label frame
+        self.style.configure("ColoredLabel.TLabel", foreground="darkblue")
         
         ttk.Label(form_frame, text="Form ID:").grid(row=0, column=0, sticky=tk.W, pady=5)
         form_entry = ttk.Entry(form_frame, textvariable=self.form_id, width=60)
@@ -1175,12 +1167,20 @@ class FixedODKDashboardGUI:
         
         # List forms button
         list_forms_btn = ttk.Button(form_frame, text="📄 List Available Forms", command=self.list_forms)
+        list_forms_btn.config(style='Accent.TButton')
+        self.style.configure('Accent.TButton',
+                              background="#1D15BE",
+                              foreground='white',
+                              font=('Helvetica', 10, 'bold'))
+        self.style.map('Accent.TButton',
+                       background=[('active', '#1F5F7A'),
+                                   ('pressed', '#0D4F73')])
         list_forms_btn.grid(row=1, column=1, sticky=tk.W, pady=5, padx=(10, 0))
         
         form_frame.columnconfigure(1, weight=1)
-        
-        # Fixed Header Image Settings
-        image_frame = ttk.LabelFrame(scrollable_frame, text="🖼️ Fixed High-Quality Header Image (PNG/JPG)", padding="15")
+
+        # Header Image Settings
+        image_frame = ttk.LabelFrame(scrollable_frame, text="🖼️ Header Image", padding="15")
         image_frame.pack(fill=tk.X, padx=20, pady=10)
         
         ttk.Label(image_frame, text="Header Image:").grid(row=0, column=0, sticky=tk.W, pady=5)
@@ -1188,12 +1188,20 @@ class FixedODKDashboardGUI:
         image_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 5))
         
         image_browse_btn = ttk.Button(image_frame, text="Browse...", command=self.browse_header_image)
+        image_browse_btn.config(style='Accent.TButton')
+        self.style.configure('Accent.TButton',
+                              background="#1D15BE",
+                              foreground='white',
+                              font=('Helvetica', 10, 'bold'))
+        self.style.map('Accent.TButton',
+                       background=[('active', '#1F5F7A'),
+                                   ('pressed', '#0D4F73')])
         image_browse_btn.grid(row=0, column=2, pady=5)
         
         # Image quality info
         quality_info = ttk.Label(image_frame, 
-                               text="✅ FIXED: Stable file handling, 300 DPI optimization, transparency support",
-                               font=("Arial", 8), foreground="green")
+                               text="✅ Image Handling",
+                               font=("Helvetica", 8), foreground="darkblue")
         quality_info.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=5)
         
         # Image preview and info frame
@@ -1205,9 +1213,19 @@ class FixedODKDashboardGUI:
         controls_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
         
         clear_image_btn = ttk.Button(controls_frame, text="Clear Image", command=self.clear_header_image)
+        clear_image_btn.config(style='Accent.TButton')
+        self.style.configure('Accent.TButton',
+                              background="#1D15BE",
+                              foreground='white',
+                              font=('Helvetica', 10, 'bold'))
+        self.style.map('Accent.TButton',
+                       background=[('active', '#1F5F7A'),
+                                   ('pressed', '#0D4F73')])
         clear_image_btn.pack(side=tk.LEFT, padx=(0, 10))
         
-        self.image_info_label = ttk.Label(controls_frame, text="", font=("Arial", 8))
+        
+        
+        self.image_info_label = ttk.Label(controls_frame, text="", font=("Helvetica", 8))
         self.image_info_label.pack(side=tk.LEFT)
         
         image_frame.columnconfigure(1, weight=1)
@@ -1227,18 +1245,36 @@ class FixedODKDashboardGUI:
         action_frame.pack(fill=tk.X, padx=20, pady=20)
         
         # Generate button
-        generate_btn = ttk.Button(action_frame, text="🚀 Generate Fixed Report", 
+        generate_btn = ttk.Button(action_frame, text="🚀 Generate Report", 
                                  command=self.generate_dashboard)
         generate_btn.pack(side=tk.LEFT, padx=(0, 10))
+        generate_btn.config(style='Accent.TButton')
+        
+        # Configure a colored style for the generate button
+        self.style.configure('Accent.TButton', 
+                   background='#2E86AB',
+                   foreground='white',
+                   font=('Helvetica', 10, 'bold'))
+        self.style.map('Accent.TButton',
+                  background=[('active', "#750505"),
+                    ('pressed', "#780D0D")])
         
         # Save settings button
         save_btn = ttk.Button(action_frame, text="💾 Save Settings", command=self.save_settings)
         save_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
+        save_btn.config(style='Accent.TButton')
+
+        self.style.map('Accent.TButton',
+                  background=[('active', "#890E0E"),
+                    ('pressed', "#800A0A")])
         # Load settings button
         load_btn = ttk.Button(action_frame, text="📁 Load Settings", command=self.load_settings)
         load_btn.pack(side=tk.LEFT)
-        
+        load_btn.config(style='Accent.TButton')
+
+        self.style.map('Accent.TButton',
+                  background=[('active', "#A00606"),
+                    ('pressed', "#150BC9")])
         # Progress bar
         self.progress = ttk.Progressbar(scrollable_frame, mode='indeterminate')
         self.progress.pack(fill=tk.X, padx=20, pady=10)
@@ -1352,7 +1388,7 @@ class FixedODKDashboardGUI:
                                    f"📸 {format_name}{transparency_info} | {quality_indicator}")
                         
                         info_label = ttk.Label(self.image_preview_frame, text=info_text, 
-                                             font=("Arial", 9), justify=tk.CENTER)
+                                             font=("Helvetica", 9), justify=tk.CENTER)
                         info_label.pack(pady=5)
                         
                         # Update the info label
@@ -1366,8 +1402,8 @@ class FixedODKDashboardGUI:
         """Clear the image preview."""
         for widget in self.image_preview_frame.winfo_children():
             widget.destroy()
-        
-        no_image_label = ttk.Label(self.image_preview_frame, text="No image selected\n💡 PNG and high-quality JPG files recommended\n✅ Fixed file handling")
+
+        no_image_label = ttk.Label(self.image_preview_frame, text="No image selected\n💡 Image\n✅ Handling")
         no_image_label.pack(pady=20)
         
     def log_output(self, message, level="INFO"):
@@ -1503,7 +1539,7 @@ class FixedODKDashboardGUI:
         def run_generation():
             try:
                 self.progress.start()
-                self.log_output("🚀 Starting FIXED high-quality dashboard generation...")
+                self.log_output("🚀 Starting dashboard generation...")
                 
                 # Check header image
                 header_image = self.header_image_path.get() if self.header_image_path.get() else None
@@ -1561,22 +1597,22 @@ class FixedODKDashboardGUI:
                 # Clean filename
                 safe_form_id = re.sub(r'[^\w\-_.]', '_', form_id)
                 output_path = reports_dir / f"dashboard_fixed_{safe_form_id}_{timestamp}.pdf"
-                
-                # Generate FIXED high-quality report
-                self.log_output(f"📄 Generating FIXED high-quality PDF report: {output_path}")
+
+                # Generate high-quality report
+                self.log_output(f"📄 Generating PDF report: {output_path}")
                 reporter = FixedHighQualityDashboardPDFReporter(analytics, header_image)
                 
                 if reporter.generate_dashboard_report(str(output_path), self.report_title.get()):
-                    self.log_output(f"🎉 FIXED high-quality dashboard report generated successfully!", "SUCCESS")
+                    self.log_output(f"🎉 Dashboard report generated successfully!", "SUCCESS")
                     self.log_output(f"📍 File saved: {output_path.absolute()}", "SUCCESS")
-                    self.log_output("✅ Fixed: No more temporary file errors with header images", "SUCCESS")
+                    self.log_output("✅ No more temporary file errors with header images", "SUCCESS")
                     self.log_output("✨ Report features stable high-resolution images and optimized quality", "SUCCESS")
                     
                     if header_image:
-                        self.log_output("🖼️ High-quality header image included (300 DPI) - FIXED", "SUCCESS")
+                        self.log_output("🖼️ High-quality header image included (300 DPI)", "SUCCESS")
                     
                     # Ask if user wants to open the file
-                    if messagebox.askyesno("Success", f"FIXED high-quality dashboard report generated successfully!\n\nFile: {output_path.name}\n\nWould you like to open the report?"):
+                    if messagebox.askyesno("Success", f"Dashboard report generated successfully!\n\nFile: {output_path.name}\n\nWould you like to open the report?"):
                         import subprocess
                         import platform
                         
@@ -1747,8 +1783,8 @@ def main():
     """Main application entry point."""
     # Update constants with current values
     global CURRENT_USER, CURRENT_DATETIME
-    CURRENT_USER = "frnkmapendo"
-    CURRENT_DATETIME = "2025-08-14 08:51:27"
+    CURRENT_USER = os.getlogin()
+    CURRENT_DATETIME = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Setup logging
     logging.basicConfig(
@@ -1820,23 +1856,11 @@ def main():
         # Initialize image preview
         app.clear_image_preview()
         
-        logging.info("ODK Central Dashboard Reporter (Fixed) started")
-        print("🚀 ODK Central Dashboard Reporter - FIXED High Quality Image Support")
-        print("✅ FIXED: Temporary file handling for header images!")
+        logging.info("ODK Central Dashboard Reporter started")
+        print("\033[92m🚀 ODK Central Dashboard Reporter\033[0m")
+        print("✅ Temporary file handling for header images!")
         print("📊 Generate professional dashboard reports from ODK Central data")
         print(f"📅 Version 2.2.1 | {CURRENT_DATETIME} UTC | User: {CURRENT_USER}")
-        print()
-        print("🔧 Fixed Issues:")
-        print("   • Fixed temporary file deletion causing ReportLab errors")
-        print("   • Improved image file stability and persistence")
-        print("   • Enhanced error handling for image processing")
-        print("   • Fixed matplotlib warnings for categorical data")
-        print()
-        print("🖼️ Image Quality Features:")
-        print("   • Automatic PNG/JPG optimization at 300 DPI")
-        print("   • Transparency support for PNG images")
-        print("   • High-quality image scaling and aspect ratio preservation")
-        print("   • Professional image compression without quality loss")
         print()
         
         # Start the application
@@ -1857,7 +1881,6 @@ def main():
         logging.error(error_msg)
         print(f"❌ {error_msg}")
         
-        # Try to show GUI error only if tkinter was successfully imported
         try:
             import tkinter as tk_error
             from tkinter import messagebox
@@ -1876,10 +1899,10 @@ def cli_mode():
     
     # Update constants with current values
     global CURRENT_USER, CURRENT_DATETIME
-    CURRENT_USER = "frnkmapendo"
-    CURRENT_DATETIME = "2025-08-14 08:51:27"
+    CURRENT_USER = os.getlogin()
+    CURRENT_DATETIME = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    parser = argparse.ArgumentParser(description='ODK Central Dashboard Reporter CLI - Fixed High Quality Images')
+    parser = argparse.ArgumentParser(description='ODK Central Dashboard Reporter')
     parser.add_argument('--url', required=True, help='ODK Central base URL')
     parser.add_argument('--username', required=True, help='Username')
     parser.add_argument('--password', required=True, help='Password')
@@ -1908,8 +1931,8 @@ def cli_mode():
         return 1
     
     try:
-        print("🚀 Starting ODK Central Dashboard Reporter (CLI Mode - FIXED)")
-        print(f"✅ Fixed high-quality image processing (Pillow {pil_version})")
+        print("🚀 Starting ODK Central Dashboard Reporter")
+        print(f"✅ High-quality image processing (Pillow {pil_version})")
         print(f"🌐 Connecting to: {args.url}")
         print(f"🎯 Image settings: {args.image_dpi} DPI, Quality: {args.image_quality}%")
         
@@ -1967,17 +1990,17 @@ def cli_mode():
                 print(f"⚠️ Warning: Header image invalid, proceeding without it")
         
         # Generate report
-        print(f"📄 Generating FIXED high-quality PDF report: {output_path}")
-        print("   🔧 Using fixed temporary file handling")
+        print(f"📄 Generating PDF report: {output_path}")
+        print("   🔧 Using temporary file handling")
         reporter = FixedHighQualityDashboardPDFReporter(analytics, header_image)
         
         if reporter.generate_dashboard_report(str(output_path), args.title):
-            print(f"🎉 FIXED high-quality dashboard report generated successfully!")
+            print(f"🎉 Dashboard report generated successfully!")
             print(f"📍 File saved: {output_path.absolute()}")
-            print("✅ Fixed: No more temporary file errors!")
-            print("✨ Report features stable high-resolution images and optimized quality!")
+            print("✅  No more temporary file errors!")
+            print("✨  Images and optimized quality!")
             if header_image:
-                print(f"🖼️ High-quality header image included at {args.image_dpi} DPI - FIXED!")
+                print(f"🖼️ Header image included at {args.image_dpi} DPI")
             return 0
         else:
             print("❌ Failed to generate dashboard report")
@@ -2028,14 +2051,13 @@ if __name__ == '__main__':
     import sys
     
     # Update constants with current values
-    CURRENT_USER = "frnkmapendo"
-    CURRENT_DATETIME = "2025-08-14 08:51:27"
+    CURRENT_USER = os.getlogin()
+    CURRENT_DATETIME = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Print header
     print("=" * 90)
-    print("🚀 ODK Central Dashboard Reporter - FIXED High Quality Image Support")
+    print("🚀 Dashboard Reporter ")
     print(f"📅 Version 2.2.1 | {CURRENT_DATETIME} UTC | User: {CURRENT_USER}")
-    print("✅ FIXED: Temporary file handling for header images!")
     print("=" * 90)
     print()
     
