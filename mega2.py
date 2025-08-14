@@ -1238,13 +1238,13 @@ app_ui = ui.page_bootstrap(
         ui.div(
             {"class": "logo-container"},
             ui.img(
-                src="https://aaph.or.tz/sites/default/files/AAPHlogo.png",
-                alt="AAPH Logo",
-                **{"class": "logo-image"}
+                src="https://aaph.or.tz/sites/default/files/AAPHlogo.png", 
+                alt="AAPH Logo", 
+                class_="logo-image"
             ),
             ui.div(
-                "MEGA 2.0 Dashboard",
-                **{"class": "logo-text"}
+                {"class": "logo-text"},
+                "MEGA 2.0 Dashboard"
             )
         )
     ),
@@ -1253,8 +1253,8 @@ app_ui = ui.page_bootstrap(
     
     # Version info with updated timestamp and username
     ui.div(
-        "Version 2.1.0 | Last update: 2025-06-23 11:40:14 | User: frnkmapendo",
-        **{"class": "version-info"}
+        {"class": "version-info"},
+        "Version 2.1.0 | Last update: 2025-06-23 11:40:14 | User: frnkmapendo"
     )
 )
 
@@ -1587,7 +1587,7 @@ def server(input, output, session: Session):
                               ui.div(
                                   {"class": "login-header"},
                                   ui.tags.i({"class": "fas fa-shield-alt fa-2x mb-3"}),
-                                  ui.h3("Secure Login", {"class": "mb-0 fw-bold"})
+                                  ui.h3({"class": "mb-0 fw-bold"}, "Secure Login")
                               ),
                               # Enhanced Login Body
                               ui.div(
@@ -1621,7 +1621,7 @@ def server(input, output, session: Session):
                                           "Sign In"
                                       )
                                   ),
-                                  ui.div(login_message_value.get(), {"class": "error-message"}) if login_message_value.get() else ""
+                                  ui.div({"class": "error-message"}, login_message_value.get()) if login_message_value.get() else ""
                               )
                           )
                       )
@@ -1677,7 +1677,7 @@ def server(input, output, session: Session):
                   # FIXED DROPDOWN COLUMN SELECTOR WITH SEARCH AND SELECT ALL/NONE FUNCTIONALITY
                   column_selector = ui.div(
                       {"class": "form-group", "id": "submission-field-dropdown"},
-                      ui.tags.label("Select Variables", {"class": "form-label"}),
+                      ui.tags.label({"class": "form-label"}, "Select Variables"),
                       
                       # Bootstrap 5 Dropdown
                       ui.tags.div(
@@ -1690,7 +1690,8 @@ def server(input, output, session: Session):
                               id="submission-field-dropdown-toggle",
                               class_="btn dropdown-toggle d-flex justify-content-between align-items-center w-100",
                               type="button",
-                              **{"data-bs-toggle": "dropdown", "aria-expanded": "false"}
+                              data_bs_toggle="dropdown", 
+                              aria_expanded="false"
                           ),
                           ui.tags.div(
                               {"class": "dropdown-menu w-100 p-0", "id": "column-dropdown-list"},
@@ -1762,7 +1763,7 @@ def server(input, output, session: Session):
                                               "checked": "checked" if col in columns[:min(len(columns), 6)] else None,
                                               "onchange": "updateDropdownCounter();"
                                           }),
-                                          ui.tags.label(col, {"class": "form-check-label ms-2", "for": f"col_{i}"})
+                                          ui.tags.label({"class": "form-check-label ms-2", "for": f"col_{i}"}, col)
                                       )
                                       for i, col in enumerate(columns)
                                   ]
@@ -1882,7 +1883,7 @@ def server(input, output, session: Session):
                           # Left side - Project & Form Selection
                           ui.div(
                               {"class": "col-md-6"},
-                              ui.h4("Project & Form Selection", {"class": "mb-3 text-primary"}),
+                              ui.h4({"class": "mb-3 text-primary"}, "Project & Form Selection"),
                               ui.div(
                                   {"class": "mb-3"},
                                   project_selector if project_selector else ""
@@ -1898,12 +1899,12 @@ def server(input, output, session: Session):
                                       "Refresh Data"
                                   )
                               ),
-                              ui.output_text("data_message", {"class": "mt-2 text-muted"}),
+                              ui.output_text("data_message", class_="mt-2 text-muted"),
                           ),
                           # Right side - Data Filters & Display Options
                           ui.div(
                               {"class": "col-md-6"},
-                              ui.h4("Select Variable", {"class": "mb-3 text-primary"}),
+                              ui.h4({"class": "mb-3 text-primary"}, "Select Variable"),
                               # REARRANGED: Row with column selector and table display rows
                               ui.div(
                                   {"class": "row mb-3"},
@@ -1938,11 +1939,11 @@ def server(input, output, session: Session):
                   # Enhanced Download section
                   ui.div(
                       {"class": "download-section"},
-                      ui.h5("Export Data", {"class": "mb-3 text-primary"}),
+                      ui.h5({"class": "mb-3 text-primary"}, "Export Data"),
                       download_button,
                       ui.div(
-                          "Download data as CSV.", 
-                          {"class": "download-info"}
+                          {"class": "download-info"},
+                          "Download data as CSV."
                       )
                   ),
                   
@@ -1957,7 +1958,7 @@ def server(input, output, session: Session):
                               ui.div(
                                   {"class": "card-header card-header-age d-flex align-items-center"},
                                   ui.tags.i({"class": "fas fa-user-clock me-2"}),
-                                  ui.h5("Adolescent Age Group Distribution", {"class": "mb-0"})
+                                  ui.h5({"class": "mb-0"}, "Adolescent Age Group Distribution")
                               ),
                               ui.div(
                                   {"class": "card-body"},
@@ -1973,7 +1974,7 @@ def server(input, output, session: Session):
                               ui.div(
                                   {"class": "card-header d-flex align-items-center"},
                                   ui.tags.i({"class": "fas fa-school me-2"}),
-                                  ui.h5("Schools Interviewed", {"class": "mb-0"})
+                                  ui.h5({"class": "mb-0"}, "Schools Interviewed")
                               ),
                               ui.div(
                                   {"class": "card-body"},
@@ -1994,7 +1995,7 @@ def server(input, output, session: Session):
                               ui.div(
                                   {"class": "card-header card-header-sample d-flex align-items-center"},
                                   ui.tags.i({"class": "fas fa-chart-pie me-2"}),
-                                  ui.h5("Sample Distribution", {"class": "mb-0"})
+                                  ui.h5({"class": "mb-0"}, "Sample Distribution")
                               ),
                               ui.div(
                                   {"class": "card-body donut-chart-container"},
@@ -2010,7 +2011,7 @@ def server(input, output, session: Session):
                               ui.div(
                                   {"class": "card-header card-header-sex d-flex align-items-center"},
                                   ui.tags.i({"class": "fas fa-venus-mars me-2"}),
-                                  ui.h5("Sex Distribution", {"class": "mb-0"})
+                                  ui.h5({"class": "mb-0"}, "Sex Distribution")
                               ),
                               ui.div(
                                   {"class": "card-body donut-chart-container"},
@@ -2030,7 +2031,7 @@ def server(input, output, session: Session):
                               ui.div(
                                   {"class": "card-header card-header-map d-flex align-items-center"},
                                   ui.tags.i({"class": "fas fa-map-marker-alt me-2"}),
-                                  ui.h5("Geographical Distribution", {"class": "mb-0"})
+                                  ui.h5({"class": "mb-0"}, "Geographical Distribution")
                               ),
                               ui.div(
                                   {"class": "card-body"},
@@ -2047,7 +2048,7 @@ def server(input, output, session: Session):
                       ui.div(
                           {"class": "card-header d-flex align-items-center"},
                           ui.tags.i({"class": "fas fa-table me-2"}),
-                          ui.h5("All Submissions", {"class": "mb-0"})
+                          ui.h5({"class": "mb-0"}, "All Submissions")
                       ),
                       ui.div(
                           {"class": "card-body"},
@@ -2884,18 +2885,18 @@ def server(input, output, session: Session):
                   {"class": "chart-stats"},
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(total), {"class": "stat-value"}),
-                      ui.div("Total", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(total)),
+                      ui.div({"class": "stat-label"}, "Total")
                   ),
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(len(value_counts)), {"class": "stat-value"}),
-                      ui.div("Categories", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(len(value_counts))),
+                      ui.div({"class": "stat-label"}, "Categories")
                   ),
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(most_common, {"class": "stat-value"}),
-                      ui.div("Most Common", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, most_common),
+                      ui.div({"class": "stat-label"}, "Most Common")
                   )
               )
           return ui.div()
@@ -2916,18 +2917,18 @@ def server(input, output, session: Session):
                   {"class": "chart-stats"},
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(total), {"class": "stat-value"}),
-                      ui.div("Total", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(total)),
+                      ui.div({"class": "stat-label"}, "Total")
                   ),
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(male_count), {"class": "stat-value"}),
-                      ui.div("Male", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(male_count)),
+                      ui.div({"class": "stat-label"}, "Male")
                   ),
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(female_count), {"class": "stat-value"}),
-                      ui.div("Female", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(female_count)),
+                      ui.div({"class": "stat-label"}, "Female")
                   )
               )
           return ui.div()
