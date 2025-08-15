@@ -2353,14 +2353,14 @@ class FixedODKDashboardGUI:
         title_frame.pack(fill=tk.X, padx=20, pady=20)
         
         title_label = ttk.Label(title_frame, text="🚀 ODK Central Dashboard Reporter",
-                               foreground="#810303",
-                               font=("Helvetica", 18, "bold"))
+                            foreground="#810303",
+                            font=("Helvetica", 18, "bold"))
         title_label.pack()
-     
+    
         # Version and date info
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         info_label = ttk.Label(title_frame, text=f"Version 2.2.1 | {CURRENT_DATETIME} UTC | User: {CURRENT_USER}", 
-                              font=("Helvetica", 8), foreground="darkblue")
+                            font=("Helvetica", 8), foreground="darkblue")
         info_label.pack(pady=(5, 0))
                 
         # ODK Central Settings
@@ -2396,12 +2396,12 @@ class FixedODKDashboardGUI:
         test_btn = ttk.Button(odk_frame, text="🔍 Test Connection", command=self.test_connection)
         test_btn.config(style='Accent.TButton')
         self.style.configure('Accent.TButton',
-                              background="#1D15BE",
-                              foreground='white',
-                              font=('Helvetica', 10, 'bold'))
+                            background="#1D15BE",
+                            foreground='white',
+                            font=('Helvetica', 10, 'bold'))
         self.style.map('Accent.TButton',
-                       background=[('active', '#1F5F7A'),
-                                   ('pressed', "#7F0909")])
+                    background=[('active', '#1F5F7A'),
+                                ('pressed', "#7F0909")])
 
         test_btn.grid(row=4, column=1, sticky=tk.W, pady=10, padx=(10, 0))        
         odk_frame.columnconfigure(1, weight=1)
@@ -2421,12 +2421,12 @@ class FixedODKDashboardGUI:
         list_forms_btn = ttk.Button(form_frame, text="📄 List Available Forms", command=self.list_forms)
         list_forms_btn.config(style='Accent.TButton')
         self.style.configure('Accent.TButton',
-                              background="#1D15BE",
-                              foreground='white',
-                              font=('Helvetica', 10, 'bold'))
+                            background="#1D15BE",
+                            foreground='white',
+                            font=('Helvetica', 10, 'bold'))
         self.style.map('Accent.TButton',
-                       background=[('active', '#1F5F7A'),
-                                   ('pressed', '#0D4F73')])
+                    background=[('active', '#1F5F7A'),
+                                ('pressed', '#0D4F73')])
         list_forms_btn.grid(row=1, column=1, sticky=tk.W, pady=5, padx=(10, 0))
         
         form_frame.columnconfigure(1, weight=1)
@@ -2442,18 +2442,18 @@ class FixedODKDashboardGUI:
         image_browse_btn = ttk.Button(image_frame, text="Browse...", command=self.browse_header_image)
         image_browse_btn.config(style='Accent.TButton')
         self.style.configure('Accent.TButton',
-                              background="#1D15BE",
-                              foreground='white',
-                              font=('Helvetica', 10, 'bold'))
+                            background="#1D15BE",
+                            foreground='white',
+                            font=('Helvetica', 10, 'bold'))
         self.style.map('Accent.TButton',
-                       background=[('active', '#1F5F7A'),
-                                   ('pressed', '#0D4F73')])
+                    background=[('active', '#1F5F7A'),
+                                ('pressed', '#0D4F73')])
         image_browse_btn.grid(row=0, column=2, pady=5)
         
         # Image quality info
         quality_info = ttk.Label(image_frame, 
-                               text="✅ Image Handling",
-                               font=("Helvetica", 8), foreground="darkblue")
+                            text="✅ Image Handling",
+                            font=("Helvetica", 8), foreground="darkblue")
         quality_info.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=5)
         
         # Image preview and info frame
@@ -2467,15 +2467,13 @@ class FixedODKDashboardGUI:
         clear_image_btn = ttk.Button(controls_frame, text="Clear Image", command=self.clear_header_image)
         clear_image_btn.config(style='Accent.TButton')
         self.style.configure('Accent.TButton',
-                              background="#1D15BE",
-                              foreground='white',
-                              font=('Helvetica', 10, 'bold'))
+                            background="#1D15BE",
+                            foreground='white',
+                            font=('Helvetica', 10, 'bold'))
         self.style.map('Accent.TButton',
-                       background=[('active', '#1F5F7A'),
-                                   ('pressed', '#0D4F73')])
+                    background=[('active', '#1F5F7A'),
+                                ('pressed', '#0D4F73')])
         clear_image_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
-        
         
         self.image_info_label = ttk.Label(controls_frame, text="", font=("Helvetica", 8))
         self.image_info_label.pack(side=tk.LEFT)
@@ -2498,22 +2496,22 @@ class FixedODKDashboardGUI:
         
         # Generate button
         generate_btn = ttk.Button(action_frame, text="🚀 Generate Report", 
-                                 command=self.generate_dashboard)
+                                command=self.generate_dashboard)
         generate_btn.pack(side=tk.LEFT, padx=(0, 10))
         generate_btn.config(style='Accent.TButton')
         
         # Configure a colored style for the generate button
         self.style.configure('Accent.TButton', 
-                   background='#2E86AB',
-                   foreground='white',
-                   font=('Helvetica', 10, 'bold'))
+                background='#2E86AB',
+                foreground='white',
+                font=('Helvetica', 10, 'bold'))
         self.style.map('Accent.TButton',
-                  background=[('active', "#750505"),
+                background=[('active', "#750505"),
                     ('pressed', "#780D0D")])
         
         # Generate HTML report button (new)
         html_btn = ttk.Button(action_frame, text="🌐 Generate HTML Report", 
-                             command=self.generate_html_report)
+                            command=self.generate_html_report)
         html_btn.pack(side=tk.LEFT, padx=(0, 10))
         html_btn.config(style='Accent.TButton')
         
@@ -2523,7 +2521,7 @@ class FixedODKDashboardGUI:
         save_btn.config(style='Accent.TButton')
 
         self.style.map('Accent.TButton',
-                  background=[('active', "#890E0E"),
+                background=[('active', "#890E0E"),
                     ('pressed', "#800A0A")])
         # Load settings button
         load_btn = ttk.Button(action_frame, text="📁 Load Settings", command=self.load_settings)
@@ -2531,7 +2529,7 @@ class FixedODKDashboardGUI:
         load_btn.config(style='Accent.TButton')
 
         self.style.map('Accent.TButton',
-                  background=[('active', "#A00606"),
+                background=[('active', "#A00606"),
                     ('pressed', "#150BC9")])
         # Progress bar
         self.progress = ttk.Progressbar(scrollable_frame, mode='indeterminate')
@@ -2552,10 +2550,10 @@ class FixedODKDashboardGUI:
         self.output_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-                # Add a new frame for variable visualization
-        visual_frame = ttk.LabelFrame(self.root, text="Custom Visualization")
-        visual_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
+        # Add a new frame for variable visualization
+        visual_frame = ttk.LabelFrame(scrollable_frame, text="Custom Visualization")
+        visual_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
         # Create a frame for variable selection and chart type
         var_select_frame = ttk.Frame(visual_frame)
         var_select_frame.pack(fill="x", padx=10, pady=5)
@@ -2573,6 +2571,9 @@ class FixedODKDashboardGUI:
         self.chart_type.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
         self.chart_type.current(0)  # Default to Horizontal Bar Chart
         
+        # Make column 1 expandable
+        var_select_frame.columnconfigure(1, weight=1)
+        
         # Add Chart Button
         add_chart_btn = ttk.Button(var_select_frame, text="Add Chart to Report", 
                                 command=self.add_chart_to_report)
@@ -2586,38 +2587,37 @@ class FixedODKDashboardGUI:
         self.preview_label = ttk.Label(self.chart_preview_frame, text="Chart preview will appear here")
         self.preview_label.pack(pady=20)
 
-        def populate_variable_dropdown(self):
-            """Populate the variable dropdown with column names from the loaded data."""
-            try:
-                if hasattr(self, 'analytics') and hasattr(self.analytics, 'data') and not self.analytics.data.empty:
-                    # Get column names, exclude system columns
-                    columns = [col for col in self.analytics.data.columns 
-                            if not col.startswith('_') and col.lower() not in 
-                            ['submissiondate', 'instanceid', 'deviceid', 'submission_date']]
-                    
-                    # Update the dropdown with columns
-                    self.variable_selection['values'] = columns
-                    
-                    if columns:
-                        self.variable_selection.current(0)
-                        self.log_output(f"✅ Loaded {len(columns)} variables for visualization", "INFO")
-                    else:
-                        self.log_output("❓ No suitable variables found for visualization", "WARNING")
+    def populate_variable_dropdown(self):
+        """Populate the variable dropdown with column names from the loaded data."""
+        try:
+            if hasattr(self, 'analytics') and hasattr(self.analytics, 'data') and not self.analytics.data.empty:
+                # Get column names, exclude system columns
+                columns = [col for col in self.analytics.data.columns 
+                        if not col.startswith('_') and col.lower() not in 
+                        ['submissiondate', 'instanceid', 'deviceid', 'submission_date']]
+                
+                # Update the dropdown with columns
+                self.variable_selection['values'] = columns
+                
+                if columns:
+                    self.variable_selection.current(0)
+                    self.log_output(f"✅ Loaded {len(columns)} variables for visualization", "INFO")
                 else:
-                    self.log_output("❗ Load data first to populate variables", "WARNING")
-                    self.variable_selection['values'] = []
-            except Exception as e:
-                self.log_output(f"❌ Error loading variables: {str(e)}", "ERROR")
+                    self.log_output("❓ No suitable variables found for visualization", "WARNING")
+            else:
+                self.log_output("❗ Load data first to populate variables", "WARNING")
+                self.variable_selection['values'] = []
+        except Exception as e:
+            self.log_output(f"❌ Error loading variables: {str(e)}", "ERROR")
 
-
-        def add_chart_to_report(self):
-            """Create a chart based on selected variable and chart type and add to report."""
+    def add_chart_to_report(self):
+        """Create a chart based on selected variable and chart type and add to report."""
         try:
             # Check if data is loaded
             if not hasattr(self, 'analytics') or not hasattr(self.analytics, 'data') or self.analytics.data.empty:
                 self.log_output("❌ No data loaded. Please load data first.", "ERROR")
                 return
-            
+
             # Get selections
             selected_var = self.variable_selection.get()
             chart_type = self.chart_type.get()
@@ -2646,193 +2646,193 @@ class FixedODKDashboardGUI:
         except Exception as e:
             self.log_output(f"❌ Error adding chart: {str(e)}", "ERROR")
 
-        def create_chart_preview(self, variable, chart_type):
-            """Create a preview of the chart."""
+    def create_chart_preview(self, variable, chart_type):
+        """Create a preview of the chart."""
+        try:
+            # Clear previous chart
+            for widget in self.chart_preview_frame.winfo_children():
+                widget.destroy()
+            
+            # Get data for the variable
+            data = self.analytics.data
+            
+            # Check if variable exists in data
+            if variable not in data.columns:
+                ttk.Label(self.chart_preview_frame, text=f"Error: Variable '{variable}' not found in data").pack(pady=20)
+                return
+            
+            # Create figure
+            fig = plt.Figure(figsize=(8, 4), dpi=100)
+            ax = fig.add_subplot(111)
+            
+            # Different chart types
+            if chart_type == "Horizontal Bar Chart":
+                self._create_horizontal_bar_chart(ax, data, variable)
+            elif chart_type == "Vertical Bar Chart":
+                self._create_vertical_bar_chart(ax, data, variable)
+            elif chart_type == "Pie Chart":
+                self._create_pie_chart(ax, data, variable)
+            elif chart_type == "Line Chart":
+                self._create_line_chart(ax, data, variable)
+            elif chart_type == "Area Chart":
+                self._create_area_chart(ax, data, variable)
+            elif chart_type == "Count Plot":
+                self._create_count_plot(ax, data, variable)
+            
+            # Set title
+            ax.set_title(f"{chart_type} for {variable}", fontsize=12)
+            
+            # Adjust layout
+            fig.tight_layout()
+            
+            # Embed in tkinter
+            canvas = FigureCanvasTkAgg(fig, self.chart_preview_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar_frame = ttk.Frame(self.chart_preview_frame)
+            toolbar_frame.pack(fill=tk.X)
+            toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
+            toolbar.update()
+            
+        except Exception as e:
+            for widget in self.chart_preview_frame.winfo_children():
+                widget.destroy()
+            ttk.Label(self.chart_preview_frame, text=f"Error creating chart: {str(e)}").pack(pady=20)
+            logging.error(f"Error creating chart preview: {e}")
+
+    def _create_horizontal_bar_chart(self, ax, data, variable):
+        """Create horizontal bar chart."""
+        # Count values for categorical data or bin for numeric
+        if data[variable].dtype.kind in 'ifc':  # integer, float, complex
+            # Numeric data: create histogram
+            counts, bins = np.histogram(data[variable].dropna(), bins=min(10, len(data[variable].unique())))
+            bin_labels = [f"{bins[i]:.1f} - {bins[i+1]:.1f}" for i in range(len(bins)-1)]
+            y_pos = np.arange(len(bin_labels))
+            ax.barh(y_pos, counts, align='center', color='skyblue')
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels(bin_labels)
+        else:
+            # Categorical data: value counts
+            value_counts = data[variable].value_counts().sort_values()
+            # Limit to top 15 categories if too many
+            if len(value_counts) > 15:
+                value_counts = value_counts.tail(15)
+                ax.set_title(f"Top 15 values for {variable}")
+            value_counts.plot.barh(ax=ax, color='skyblue')
+        
+        ax.set_xlabel("Count")
+        ax.set_ylabel(variable)
+
+    def _create_vertical_bar_chart(self, ax, data, variable):
+        """Create vertical bar chart."""
+        # Count values for categorical data or bin for numeric
+        if data[variable].dtype.kind in 'ifc':  # integer, float, complex
+            # Numeric data: create histogram
+            counts, bins = np.histogram(data[variable].dropna(), bins=min(10, len(data[variable].unique())))
+            bin_labels = [f"{bins[i]:.1f} - {bins[i+1]:.1f}" for i in range(len(bins)-1)]
+            x_pos = np.arange(len(bin_labels))
+            ax.bar(x_pos, counts, align='center', color='skyblue')
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(bin_labels, rotation=45, ha='right')
+        else:
+            # Categorical data: value counts
+            value_counts = data[variable].value_counts()
+            # Limit to top 15 categories if too many
+            if len(value_counts) > 15:
+                value_counts = value_counts.head(15)
+                ax.set_title(f"Top 15 values for {variable}")
+            value_counts.plot.bar(ax=ax, color='skyblue')
+            plt.xticks(rotation=45, ha='right')
+        
+        ax.set_ylabel("Count")
+        ax.set_xlabel(variable)
+
+    def _create_pie_chart(self, ax, data, variable):
+        """Create pie chart."""
+        # Get value counts
+        value_counts = data[variable].value_counts()
+        
+        # Limit to top 8 categories + "Others" for readability
+        if len(value_counts) > 8:
+            top_values = value_counts.head(7)
+            others_count = value_counts[7:].sum()
+            top_values['Others'] = others_count
+            value_counts = top_values
+        
+        # Plot pie chart
+        value_counts.plot.pie(ax=ax, autopct='%1.1f%%', shadow=False, startangle=90)
+        ax.set_ylabel('')  # Remove y-label
+        ax.set_title(f"Distribution of {variable}")
+
+    def _create_line_chart(self, ax, data, variable):
+        """Create line chart (for time-based or ordered data)."""
+        if data[variable].dtype.kind in 'ifc':  # integer, float, complex
+            # Create a line chart of the distribution (density)
             try:
-                # Clear previous chart
-                for widget in self.chart_preview_frame.winfo_children():
-                    widget.destroy()
-                
-                # Get data for the variable
-                data = self.analytics.data
-                
-                # Check if variable exists in data
-                if variable not in data.columns:
-                    ttk.Label(self.chart_preview_frame, text=f"Error: Variable '{variable}' not found in data").pack(pady=20)
-                    return
-                
-                # Create figure
-                fig = plt.Figure(figsize=(8, 4), dpi=100)
-                ax = fig.add_subplot(111)
-                
-                # Different chart types
-                if chart_type == "Horizontal Bar Chart":
-                    self._create_horizontal_bar_chart(ax, data, variable)
-                elif chart_type == "Vertical Bar Chart":
-                    self._create_vertical_bar_chart(ax, data, variable)
-                elif chart_type == "Pie Chart":
-                    self._create_pie_chart(ax, data, variable)
-                elif chart_type == "Line Chart":
-                    self._create_line_chart(ax, data, variable)
-                elif chart_type == "Area Chart":
-                    self._create_area_chart(ax, data, variable)
-                elif chart_type == "Count Plot":
-                    self._create_count_plot(ax, data, variable)
-                
-                # Set title
-                ax.set_title(f"{chart_type} for {variable}", fontsize=12)
-                
-                # Adjust layout
-                fig.tight_layout()
-                
-                # Embed in tkinter
-                canvas = FigureCanvasTkAgg(fig, self.chart_preview_frame)
-                canvas.draw()
-                canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-                
-                # Add toolbar
-                toolbar_frame = ttk.Frame(self.chart_preview_frame)
-                toolbar_frame.pack(fill=tk.X)
-                toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
-                toolbar.update()
-                
-            except Exception as e:
-                for widget in self.chart_preview_frame.winfo_children():
-                    widget.destroy()
-                ttk.Label(self.chart_preview_frame, text=f"Error creating chart: {str(e)}").pack(pady=20)
-                logging.error(f"Error creating chart preview: {e}")
-        ####################################################################
-            def _create_horizontal_bar_chart(self, ax, data, variable):
-                """Create horizontal bar chart."""
-            # Count values for categorical data or bin for numeric
-            if data[variable].dtype.kind in 'ifc':  # integer, float, complex
-                # Numeric data: create histogram
-                counts, bins = np.histogram(data[variable].dropna(), bins=min(10, len(data[variable].unique())))
-                bin_labels = [f"{bins[i]:.1f} - {bins[i+1]:.1f}" for i in range(len(bins)-1)]
-                y_pos = np.arange(len(bin_labels))
-                ax.barh(y_pos, counts, align='center', color='skyblue')
-                ax.set_yticks(y_pos)
-                ax.set_yticklabels(bin_labels)
-            else:
-                # Categorical data: value counts
-                value_counts = data[variable].value_counts().sort_values()
-                # Limit to top 15 categories if too many
-                if len(value_counts) > 15:
-                    value_counts = value_counts.tail(15)
-                    ax.set_title(f"Top 15 values for {variable}")
-                value_counts.plot.barh(ax=ax, color='skyblue')
-            
-            ax.set_xlabel("Count")
-            ax.set_ylabel(variable)
-            
-        def _create_vertical_bar_chart(self, ax, data, variable):
-            """Create vertical bar chart."""
-            # Count values for categorical data or bin for numeric
-            if data[variable].dtype.kind in 'ifc':  # integer, float, complex
-                # Numeric data: create histogram
-                counts, bins = np.histogram(data[variable].dropna(), bins=min(10, len(data[variable].unique())))
-                bin_labels = [f"{bins[i]:.1f} - {bins[i+1]:.1f}" for i in range(len(bins)-1)]
-                x_pos = np.arange(len(bin_labels))
-                ax.bar(x_pos, counts, align='center', color='skyblue')
-                ax.set_xticks(x_pos)
-                ax.set_xticklabels(bin_labels, rotation=45, ha='right')
-            else:
-                # Categorical data: value counts
-                value_counts = data[variable].value_counts()
-                # Limit to top 15 categories if too many
-                if len(value_counts) > 15:
-                    value_counts = value_counts.head(15)
-                    ax.set_title(f"Top 15 values for {variable}")
-                value_counts.plot.bar(ax=ax, color='skyblue')
-                plt.xticks(rotation=45, ha='right')
-            
-            ax.set_ylabel("Count")
-            ax.set_xlabel(variable)
-
-        def _create_pie_chart(self, ax, data, variable):
-            """Create pie chart."""
-            # Get value counts
-            value_counts = data[variable].value_counts()
-            
-            # Limit to top 8 categories + "Others" for readability
-            if len(value_counts) > 8:
-                top_values = value_counts.head(7)
-                others_count = value_counts[7:].sum()
-                top_values['Others'] = others_count
-                value_counts = top_values
-            
-            # Plot pie chart
-            value_counts.plot.pie(ax=ax, autopct='%1.1f%%', shadow=False, startangle=90)
-            ax.set_ylabel('')  # Remove y-label
-            ax.set_title(f"Distribution of {variable}")
-
-        def _create_line_chart(self, ax, data, variable):
-            """Create line chart (for time-based or ordered data)."""
-            if data[variable].dtype.kind in 'ifc':  # integer, float, complex
-                # Create a line chart of the distribution (density)
-                try:
-                    import scipy.stats as stats
-                    kde = stats.gaussian_kde(data[variable].dropna())
-                    x_range = np.linspace(data[variable].min(), data[variable].max(), 100)
-                    density = kde(x_range)
-                    ax.plot(x_range, density, 'b-')
-                    ax.fill_between(x_range, density, alpha=0.3)
-                    ax.set_xlabel(variable)
-                    ax.set_ylabel('Density')
-                    ax.set_title(f"Distribution Density of {variable}")
-                except Exception:
-                    # Fallback if KDE doesn't work
-                    data[variable].plot.line(ax=ax, color='blue')
-            else:
-                # For categorical, show a trend of counts
-                value_counts = data[variable].value_counts().sort_index()
-                value_counts.plot.line(ax=ax, marker='o')
+                import scipy.stats as stats
+                kde = stats.gaussian_kde(data[variable].dropna())
+                x_range = np.linspace(data[variable].min(), data[variable].max(), 100)
+                density = kde(x_range)
+                ax.plot(x_range, density, 'b-')
+                ax.fill_between(x_range, density, alpha=0.3)
                 ax.set_xlabel(variable)
-                ax.set_ylabel('Count')
-                plt.xticks(rotation=45, ha='right')
-
-        def _create_area_chart(self, ax, data, variable):
-            """Create area chart."""
-            if data[variable].dtype.kind in 'ifc':  # integer, float, complex
-                # Create bins and count
-                counts, bins = np.histogram(data[variable].dropna(), bins=min(15, len(data[variable].unique())))
-                bin_centers = [(bins[i] + bins[i+1])/2 for i in range(len(bins)-1)]
-                ax.fill_between(bin_centers, counts, alpha=0.7, color='skyblue')
-                ax.plot(bin_centers, counts, 'b-', alpha=0.7)
-                ax.set_xlabel(variable)
-                ax.set_ylabel('Count')
-            else:
-                # For categorical, show counts as area
-                value_counts = data[variable].value_counts().sort_index()
-                value_counts.plot.area(ax=ax, alpha=0.7, color='skyblue')
-                ax.set_xlabel(variable)
-                ax.set_ylabel('Count')
-                plt.xticks(rotation=45, ha='right')
-
-        def _create_count_plot(self, ax, data, variable):
-            """Create count plot with percentages."""
-            # Get value counts and percentages
-            value_counts = data[variable].value_counts()
-            total = len(data[variable].dropna())
-            
-            # Limit to top 10 categories if too many
-            if len(value_counts) > 10:
-                value_counts = value_counts.head(10)
-                ax.set_title(f"Top 10 values for {variable}")
-            
-            # Create bar plot
-            bars = ax.bar(range(len(value_counts)), value_counts.values, align='center')
-            ax.set_xticks(range(len(value_counts)))
-            ax.set_xticklabels(value_counts.index, rotation=45, ha='right')
-            
-            # Add percentage labels on bars
-            for i, bar in enumerate(bars):
-                percentage = (value_counts.values[i] / total) * 100
-                ax.text(i, bar.get_height() + 0.5, f"{percentage:.1f}%", 
-                    ha='center', va='bottom', fontweight='bold')
-            
+                ax.set_ylabel('Density')
+                ax.set_title(f"Distribution Density of {variable}")
+            except Exception:
+                # Fallback if KDE doesn't work
+                data[variable].plot.line(ax=ax, color='blue')
+        else:
+            # For categorical, show a trend of counts
+            value_counts = data[variable].value_counts().sort_index()
+            value_counts.plot.line(ax=ax, marker='o')
             ax.set_xlabel(variable)
             ax.set_ylabel('Count')
+            plt.xticks(rotation=45, ha='right')
+
+    def _create_area_chart(self, ax, data, variable):
+        """Create area chart."""
+        if data[variable].dtype.kind in 'ifc':  # integer, float, complex
+            # Create bins and count
+            counts, bins = np.histogram(data[variable].dropna(), bins=min(15, len(data[variable].unique())))
+            bin_centers = [(bins[i] + bins[i+1])/2 for i in range(len(bins)-1)]
+            ax.fill_between(bin_centers, counts, alpha=0.7, color='skyblue')
+            ax.plot(bin_centers, counts, 'b-', alpha=0.7)
+            ax.set_xlabel(variable)
+            ax.set_ylabel('Count')
+        else:
+            # For categorical, show counts as area
+            value_counts = data[variable].value_counts().sort_index()
+            value_counts.plot.area(ax=ax, alpha=0.7, color='skyblue')
+            ax.set_xlabel(variable)
+            ax.set_ylabel('Count')
+            plt.xticks(rotation=45, ha='right')
+
+    def _create_count_plot(self, ax, data, variable):
+        """Create count plot with percentages."""
+        # Get value counts and percentages
+        value_counts = data[variable].value_counts()
+        total = len(data[variable].dropna())
+        
+        # Limit to top 10 categories if too many
+        if len(value_counts) > 10:
+            value_counts = value_counts.head(10)
+            ax.set_title(f"Top 10 values for {variable}")
+        
+        # Create bar plot
+        bars = ax.bar(range(len(value_counts)), value_counts.values, align='center')
+        ax.set_xticks(range(len(value_counts)))
+        ax.set_xticklabels(value_counts.index, rotation=45, ha='right')
+        
+        # Add percentage labels on bars
+        for i, bar in enumerate(bars):
+            percentage = (value_counts.values[i] / total) * 100
+            ax.text(i, bar.get_height() + 0.5, f"{percentage:.1f}%", 
+                ha='center', va='bottom', fontweight='bold')
+        
+        ax.set_xlabel(variable)
+        ax.set_ylabel('Count')
         ####################################################################
         #     
         ####################################################################
