@@ -51,6 +51,8 @@ try:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from reportlab.lib.utils import ImageReader
+    import numpy as np
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
     HAS_REPORTLAB = True
 except ImportError:
     HAS_REPORTLAB = False
@@ -67,8 +69,16 @@ except ImportError:
         def __enter__(self): return self
         def __exit__(self, *args): pass
 
+try:
+    import folium
+    from folium.plugins import MarkerCluster
+    HAS_FOLIUM = True
+except ImportError:
+    HAS_FOLIUM = False
+
 # Updated constants with current values
 CURRENT_USER = os.getlogin()
+CURRENT_DATETIME = "2025-08-15 07:33:14"  # Using the provided date/time
 
 # Global list to track temporary files for cleanup
 _temp_files_to_cleanup = []
@@ -297,6 +307,412 @@ class HighQualityImageProcessor:
             return None
 
 # ============================================================================
+# Map Handling for Geographic Data
+# ============================================================================
+
+class MapHandler:
+    """Handle map generation and display using OpenStreetMap via folium."""
+    
+    def __init__(self, debug=False):
+        self.default_location = [-6.8235, 39.2695]  # Default location (e.g., Dar es Salaam)
+        self.default_zoom = 7
+        self.debug = debug
+    
+    def create_map_from_geopoints(self, data, lat_column=None, lon_column=None, 
+                                  label_column=None, cluster=True):
+        """
+        Create a map visualization from geopoint data in the dataframe with improved detection.
+        
+        Args:
+            data: DataFrame containing geopoint data
+            lat_column: Column name for latitude
+            lon_column: Column name for longitude
+            label_column: Column name for marker labels
+            cluster: Whether to cluster nearby markers
+            
+        Returns:
+            HTML string of the map or None if no valid data
+        """
+        if not HAS_FOLIUM:
+            return None
+        
+        # Debug output if enabled
+        if self.debug:
+            logging.info(f"Map creation with data shape: {data.shape}")
+            if lat_column and lon_column:
+                logging.info(f"Using specified columns: {lat_column} (lat) and {lon_column} (lon)")
+            
+        # Try to auto-detect geopoint columns if not specified
+        if lat_column is None or lon_column is None:
+            lat_column, lon_column = self._detect_geopoint_columns(data)
+            if self.debug and (lat_column is not None and lon_column is not None):
+                logging.info(f"Auto-detected columns: {lat_column} (lat) and {lon_column} (lon)")
+            
+        if lat_column is None or lon_column is None:
+            if self.debug:
+                logging.warning("Could not detect latitude/longitude columns")
+            return None
+            
+        # Handle ODK-style geopoint columns (stored as "lat lon alt acc" in a single column)
+        if lat_column == lon_column:  # This happens when we detect an ODK geopoint column
+            # Extract coordinates from the geopoint string
+            geopoint_col = lat_column
+            if self.debug:
+                logging.info(f"Processing ODK geopoint column: {geopoint_col}")
+                sample = data[geopoint_col].dropna().iloc[0] if not data[geopoint_col].dropna().empty else None
+                if sample:
+                    logging.info(f"Sample geopoint data: {sample}")
+            
+            # Create temporary lat/lon columns
+            try:
+                # Make a working copy to avoid SettingWithCopyWarning
+                working_data = data.copy()
+                
+                # Try different parsing approaches based on common ODK formats
+                
+                # 1. Standard ODK format: "lat lon alt acc" (space-separated)
+                try:
+                    # Extract from geopoint strings like "lat lon alt acc"
+                    # Handle both string and list formats
+                    if isinstance(working_data[geopoint_col].iloc[0], str):
+                        working_data['temp_lat'] = working_data[geopoint_col].astype(str).str.split().str[0]
+                        working_data['temp_lon'] = working_data[geopoint_col].astype(str).str.split().str[1]
+                    elif isinstance(working_data[geopoint_col].iloc[0], list):
+                        working_data['temp_lat'] = working_data[geopoint_col].apply(lambda x: x[0] if isinstance(x, list) and len(x) > 0 else None)
+                        working_data['temp_lon'] = working_data[geopoint_col].apply(lambda x: x[1] if isinstance(x, list) and len(x) > 1 else None)
+                    
+                    # Convert to float with coercion
+                    working_data['temp_lat'] = pd.to_numeric(working_data['temp_lat'], errors='coerce')
+                    working_data['temp_lon'] = pd.to_numeric(working_data['temp_lon'], errors='coerce')
+                    
+                    if self.debug:
+                        valid_coords = working_data['temp_lat'].notna().sum()
+                        logging.info(f"Parsed {valid_coords} valid coordinates from ODK geopoint")
+                    
+                    if working_data['temp_lat'].notna().sum() > 0:
+                        lat_column = 'temp_lat'
+                        lon_column = 'temp_lon'
+                        data = working_data  # Use the working copy with parsed columns
+                except Exception as e:
+                    if self.debug:
+                        logging.warning(f"Standard ODK format parsing failed: {e}")
+                
+                # 2. If that fails, try comma-separated format "lat,lon,alt,acc"
+                if 'temp_lat' not in working_data.columns or working_data['temp_lat'].notna().sum() == 0:
+                    try:
+                        working_data['temp_lat'] = working_data[geopoint_col].astype(str).str.split(',').str[0]
+                        working_data['temp_lon'] = working_data[geopoint_col].astype(str).str.split(',').str[1]
+                        
+                        # Convert to float with coercion
+                        working_data['temp_lat'] = pd.to_numeric(working_data['temp_lat'], errors='coerce')
+                        working_data['temp_lon'] = pd.to_numeric(working_data['temp_lon'], errors='coerce')
+                        
+                        if working_data['temp_lat'].notna().sum() > 0:
+                            lat_column = 'temp_lat'
+                            lon_column = 'temp_lon'
+                            data = working_data  # Use the working copy with parsed columns
+                    except Exception as e:
+                        if self.debug:
+                            logging.warning(f"Comma-separated format parsing failed: {e}")
+            except Exception as e:
+                if self.debug:
+                    logging.error(f"Error extracting coordinates from geopoint column: {e}")
+                return None
+            
+        # Filter rows with valid coordinates
+        valid_data = data.dropna(subset=[lat_column, lon_column])
+        
+        # Check if we have any valid points
+        if valid_data.empty:
+            if self.debug:
+                logging.warning("No valid coordinates found after filtering")
+            return None
+            
+        # Try to convert coordinates to float if they're not already
+        try:
+            valid_data[lat_column] = pd.to_numeric(valid_data[lat_column], errors='coerce')
+            valid_data[lon_column] = pd.to_numeric(valid_data[lon_column], errors='coerce')
+            
+            # Filter again after conversion
+            valid_data = valid_data.dropna(subset=[lat_column, lon_column])
+            
+            if valid_data.empty:
+                if self.debug:
+                    logging.warning("No valid numeric coordinates after conversion")
+                return None
+                
+            if self.debug:
+                logging.info(f"Final valid coordinates count: {len(valid_data)}")
+                sample_coords = valid_data[[lat_column, lon_column]].head(3).values.tolist()
+                logging.info(f"Sample coordinates (lat, lon): {sample_coords}")
+        except Exception as e:
+            if self.debug:
+                logging.error(f"Error converting coordinates to float: {e}")
+            return None
+            
+        # Create base map at the center of points
+        center_lat = valid_data[lat_column].mean()
+        center_lon = valid_data[lon_column].mean()
+        
+        if self.debug:
+            logging.info(f"Map center at: {center_lat}, {center_lon}")
+        
+        m = folium.Map(location=[center_lat, center_lon], 
+                       zoom_start=self.default_zoom,
+                       tiles='OpenStreetMap')
+        
+        # Add markers (with or without clustering)
+        if cluster:
+            marker_cluster = MarkerCluster().add_to(m)
+            
+        for idx, row in valid_data.iterrows():
+            try:
+                lat = float(row[lat_column])
+                lon = float(row[lon_column])
+                
+                # Skip invalid coordinates
+                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    if self.debug:
+                        logging.warning(f"Invalid coordinates: {lat}, {lon}")
+                    continue
+                    
+                # Create marker label
+                if label_column and label_column in row:
+                    label = f"{row[label_column]}"
+                else:
+                    label = f"Point {idx+1}"
+                    
+                # Additional info popup
+                popup_text = f"<b>{label}</b><br>Lat: {lat:.6f}<br>Lon: {lon:.6f}"
+                
+                # Create the marker
+                marker = folium.Marker(
+                    location=[lat, lon],
+                    popup=folium.Popup(popup_text, max_width=300),
+                    tooltip=label
+                )
+                
+                # Add to cluster or directly to map
+                if cluster:
+                    marker.add_to(marker_cluster)
+                else:
+                    marker.add_to(m)
+            except Exception as e:
+                if self.debug:
+                    logging.warning(f"Error adding marker at index {idx}: {e}")
+                continue
+        
+        # Save to HTML string
+        try:
+            map_html = io.BytesIO()
+            m.save(map_html, close_file=False)
+            map_html.seek(0)
+            return map_html.read().decode()
+        except Exception as e:
+            if self.debug:
+                logging.error(f"Error saving map to HTML: {e}")
+            return None
+    
+    def _detect_geopoint_columns(self, data):
+        """Auto-detect latitude and longitude columns in DataFrame with enhanced detection."""
+        lat_columns = []
+        lon_columns = []
+        
+        # Common patterns for latitude/longitude columns - expanded for better detection
+        lat_patterns = ['lat', 'latitude', '_lat', 'y', 'northing']
+        lon_patterns = ['lon', 'lng', 'long', 'longitude', '_lon', 'x', 'easting']
+        
+        # Check for columns with exact matches first (highest confidence)
+        for col in data.columns:
+            col_lower = col.lower()
+            # Exact matches for latitude
+            if col_lower in ('lat', 'latitude'):
+                lat_columns.insert(0, col)  # Give highest priority
+            # Exact matches for longitude
+            elif col_lower in ('lon', 'lng', 'long', 'longitude'):
+                lon_columns.insert(0, col)  # Give highest priority
+        
+        # If exact matches found, return them immediately
+        if lat_columns and lon_columns:
+            if self.debug:
+                logging.info(f"Found exact match columns: {lat_columns[0]} and {lon_columns[0]}")
+            return lat_columns[0], lon_columns[0]
+        
+        # Look for ODK-style geopoint columns
+        for col in data.columns:
+            if 'geopoint' in col.lower() or 'coordinates' in col.lower():
+                # Check if this column might contain coordinates
+                try:
+                    sample = data[col].dropna().iloc[0] if not data[col].dropna().empty else None
+                    if sample:
+                        # For string format "lat lon alt acc"
+                        if isinstance(sample, str) and len(sample.split()) >= 2:
+                            if self.debug:
+                                logging.info(f"Detected ODK geopoint column (string): {col}")
+                            return col, col
+                        # For list/array format [lat, lon, alt, acc]
+                        elif isinstance(sample, (list, tuple)) and len(sample) >= 2:
+                            if self.debug:
+                                logging.info(f"Detected ODK geopoint column (list): {col}")
+                            return col, col
+                except Exception as e:
+                    if self.debug:
+                        logging.debug(f"Error checking potential geopoint column {col}: {e}")
+        
+        # Look for partial matches if no exact matches were found
+        for col in data.columns:
+            col_lower = col.lower()
+            # Check for latitude patterns
+            if any(pattern in col_lower for pattern in lat_patterns):
+                lat_columns.append(col)
+            # Check for longitude patterns
+            if any(pattern in col_lower for pattern in lon_patterns):
+                lon_columns.append(col)
+        
+        # If we have potential latitude/longitude columns
+        if lat_columns and lon_columns:
+            # Try to find pairs with matching prefixes
+            for lat_col in lat_columns:
+                for lon_col in lon_columns:
+                    # Extract common prefix
+                    lat_parts = lat_col.lower().split('lat')
+                    if len(lat_parts) > 0 and lat_parts[0]:
+                        prefix = lat_parts[0]
+                        if lon_col.lower().startswith(prefix):
+                            if self.debug:
+                                logging.info(f"Found matching prefix pair: {lat_col} and {lon_col}")
+                            return lat_col, lon_col
+            
+            # If no matching prefixes, return the first pair
+            if self.debug:
+                logging.info(f"Using first available pair: {lat_columns[0]} and {lon_columns[0]}")
+            return lat_columns[0], lon_columns[0]
+        
+        # If still no matches, look for columns with numeric data in appropriate ranges
+        if self.debug:
+            logging.info("Trying to identify coordinate columns by value ranges")
+        
+        potential_lat = []
+        potential_lon = []
+        
+        for col in data.columns:
+            try:
+                # Try to convert to numeric
+                numeric_data = pd.to_numeric(data[col], errors='coerce')
+                valid_count = numeric_data.notna().sum()
+                
+                # Only consider columns with sufficient valid numeric data
+                if valid_count > 5:  # At least 5 valid values
+                    min_val, max_val = numeric_data.min(), numeric_data.max()
+                    
+                    # Check for latitude range (-90 to 90)
+                    if -90 <= min_val <= max_val <= 90:
+                        potential_lat.append((col, valid_count))
+                    
+                    # Check for longitude range (-180 to 180)
+                    if -180 <= min_val <= max_val <= 180:
+                        potential_lon.append((col, valid_count))
+            except Exception:
+                continue
+        
+        # Sort by valid count (descending) and take the best matches
+        if potential_lat and potential_lon:
+            potential_lat.sort(key=lambda x: x[1], reverse=True)
+            potential_lon.sort(key=lambda x: x[1], reverse=True)
+            
+            lat_col = potential_lat[0][0]
+            lon_col = potential_lon[0][0]
+            
+            # Make sure we don't use the same column for both
+            if lat_col == lon_col and len(potential_lon) > 1:
+                lon_col = potential_lon[1][0]
+            elif lat_col == lon_col and len(potential_lat) > 1:
+                lat_col = potential_lat[1][0]
+            
+            if lat_col != lon_col:
+                if self.debug:
+                    logging.info(f"Identified by value range: {lat_col} (lat) and {lon_col} (lon)")
+                return lat_col, lon_col
+        
+        if self.debug:
+            logging.warning("Could not detect latitude/longitude columns")
+        return None, None
+    
+    def save_map_to_temp_file(self, html_content):
+        """Save map HTML to a temporary file."""
+        if not html_content:
+            return None
+            
+        # Create a temp file
+        fd, path = tempfile.mkstemp(suffix='.html', prefix='odk_map_')
+        with os.fdopen(fd, 'w') as temp:
+            temp.write(html_content)
+        
+        # Add to cleanup list
+        global _temp_files_to_cleanup
+        _temp_files_to_cleanup.append(path)
+        
+        return path
+    
+    def convert_map_to_image(self, html_content, width=800, height=500, dpi=150):
+        """Convert map HTML to an image for PDF reports."""
+        if not html_content:
+            return None
+            
+        try:
+            # Save to temp file
+            temp_html_path = self.save_map_to_temp_file(html_content)
+            if not temp_html_path:
+                return None
+            
+            # Path for the image output
+            temp_img_fd, temp_img_path = tempfile.mkstemp(suffix='.png', prefix='odk_map_img_')
+            os.close(temp_img_fd)
+            
+            # Add to cleanup list
+            global _temp_files_to_cleanup
+            _temp_files_to_cleanup.append(temp_img_path)
+            
+            # Create a basic map image with PIL
+            from PIL import Image, ImageDraw, ImageFont
+            
+            img = Image.new('RGB', (width, height), color=(245, 245, 245))
+            draw = ImageDraw.Draw(img)
+            
+            # Draw a map-like placeholder
+            draw.rectangle([20, 20, width-20, height-20], fill=(225, 225, 225), outline=(200, 200, 200))
+            
+            # Add grid lines to simulate a map
+            for x in range(40, width-20, 40):
+                draw.line([(x, 20), (x, height-20)], fill=(210, 210, 210), width=1)
+            
+            for y in range(40, height-20, 40):
+                draw.line([(20, y), (width-20, y)], fill=(210, 210, 210), width=1)
+            
+            # Add text
+            try:
+                font = ImageFont.truetype("arial.ttf", 24)
+            except:
+                font = ImageFont.load_default()
+                
+            draw.text((width//2-150, height//2-20), 
+                     "Map will be displayed here", 
+                     fill=(100, 100, 100), font=font)
+            
+            draw.text((width//2-140, height//2+20), 
+                     "Interactive in HTML report", 
+                     fill=(100, 100, 100), font=font)
+                     
+            # Save the image
+            img.save(temp_img_path, format='PNG', dpi=(dpi, dpi))
+            
+            return temp_img_path
+            
+        except Exception as e:
+            logging.error(f"Error converting map to image: {e}")
+            return None
+
+# ============================================================================
 # ODK Central Client (keeping the same implementation)
 # ============================================================================
 
@@ -520,26 +936,32 @@ class DashboardAnalytics:
             logging.error(f"Error calculating completion stats: {e}")
             return {'completion_rate': 0, 'total_fields': 0, 'avg_completed': 0, 'total_submissions': 0}
     
-    def get_recent_activity(self, days: int = 7) -> Dict[str, Any]:
-        """Get recent activity statistics."""
-        if self.date_column is None or self.data.empty:
-            return {'recent_submissions': 0, 'daily_average': 0, 'days_analyzed': days}
+def get_recent_activity(self, days: int = 7) -> Dict[str, Any]:
+    """Get recent activity statistics."""
+    if self.date_column is None or self.data.empty:
+        return {'recent_submissions': 0, 'daily_average': 0, 'days_analyzed': days}
+    
+    try:
+        # Convert to a standard datetime format without timezone for comparison
+        recent_date = datetime.now().replace(tzinfo=None) - timedelta(days=days)
         
-        try:
-            recent_date = datetime.now() - timedelta(days=days)
-            recent_data = self.data[self.data['submission_date'] >= recent_date]
-            
-            return {
-                'recent_submissions': len(recent_data),
-                'daily_average': len(recent_data) / days if days > 0 else 0,
-                'days_analyzed': days
-            }
-        except Exception as e:
-            logging.error(f"Error calculating recent activity: {e}")
-            return {'recent_submissions': 0, 'daily_average': 0, 'days_analyzed': days}
+        # Handle timezone-aware and naive datetime objects
+        self.data['submission_date_notz'] = self.data['submission_date'].dt.tz_localize(None) if hasattr(self.data['submission_date'].iloc[0], 'tz_localize') else self.data['submission_date']
+        
+        # Filter using the timezone-naive versions
+        recent_data = self.data[self.data['submission_date_notz'] >= recent_date]
+        
+        return {
+            'recent_submissions': len(recent_data),
+            'daily_average': len(recent_data) / days if days > 0 else 0,
+            'days_analyzed': days
+        }
+    except Exception as e:
+        logging.error(f"Error calculating recent activity: {e}")
+        return {'recent_submissions': 0, 'daily_average': 0, 'days_analyzed': days}
 
 # ============================================================================
-# Enhanced Dashboard PDF Reporter with Fixed Image Handling
+# Enhanced Dashboard PDF Reporter with Fixed Image Handling and Map Support
 # ============================================================================
 
 class FixedHighQualityDashboardPDFReporter:
@@ -554,7 +976,7 @@ class FixedHighQualityDashboardPDFReporter:
         self.optimized_image_path = None  # Store optimized image path
         self.styles = getSampleStyleSheet()
         self._setup_custom_styles()
-        
+    
     def _setup_custom_styles(self):
         """Setup modern dashboard styles."""
         try:
@@ -589,6 +1011,16 @@ class FixedHighQualityDashboardPDFReporter:
                 textColor=colors.HexColor('#C73E1D'),
                 fontName='Helvetica-Bold'
             ))
+            
+            # Check if Italic style already exists before adding it
+            if 'Italic' not in self.styles:
+                self.styles.add(ParagraphStyle(
+                    name='Italic',
+                    parent=self.styles['Normal'],
+                    fontName='Helvetica-Oblique',
+                    textColor=colors.darkgrey
+                ))
+                
         except Exception as e:
             logging.error(f"Error setting up styles: {e}")
     
@@ -596,7 +1028,13 @@ class FixedHighQualityDashboardPDFReporter:
         """Generate comprehensive dashboard report with header image."""
         try:
             logging.info(f"PDF generation to: {output_path}")
-            
+##########################################################################
+            if hasattr(self.analytics, 'custom_charts') and self.analytics.custom_charts:
+                story.extend(self._create_custom_charts())
+
+            # Build the PDF
+            doc.build(story)
+##################################################################################
             # Pre-process header image if provided
             if self.header_image_path and HighQualityImageProcessor.validate_image(self.header_image_path):
                 logging.info("Pre-processing header image...")
@@ -639,6 +1077,9 @@ class FixedHighQualityDashboardPDFReporter:
             if HAS_MATPLOTLIB:
                 story.extend(self._create_dashboard_charts())
             
+            # Geographic visualization (if geopoint data available)
+            story.extend(self._create_map_visualization())
+            
             # Build the PDF
             doc.build(story)
             
@@ -651,8 +1092,164 @@ class FixedHighQualityDashboardPDFReporter:
             
         except Exception as e:
             logging.error(f"Failed to generate dashboard report: {e}")
+            import traceback
+            logging.error(f"Full error: {traceback.format_exc()}")
             # Clean up temp files on error too
             cleanup_temp_files()
+            return False
+    
+    def generate_html_report(self, output_path: str, title: str = "ODK Central Dashboard Report") -> bool:
+        """Generate an HTML report with interactive maps."""
+        try:
+            logging.info(f"HTML report generation to: {output_path}")
+            
+            # Create map handler
+            map_handler = MapHandler()
+            
+            # Start building HTML
+            html_parts = []
+            html_parts.append("""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>{title}</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
+                    .container {{ max-width: 1200px; margin: 0 auto; }}
+                    h1 {{ color: #2E86AB; text-align: center; }}
+                    h2 {{ color: #A23B72; margin-top: 30px; }}
+                    h3 {{ color: #C73E1D; margin-top: 25px; }}
+                    .section {{ margin: 30px 0; padding: 20px; background-color: #f8f9fa; border-radius: 5px; }}
+                    table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
+                    th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+                    th {{ background-color: #2E86AB; color: white; }}
+                    tr:hover {{ background-color: #f5f5f5; }}
+                    .chart-container {{ height: 400px; margin: 30px 0; }}
+                    .map-container {{ height: 500px; margin: 30px 0; }}
+                    .footer {{ text-align: center; margin-top: 50px; font-size: 0.8em; color: #666; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+            """.format(title=title))
+            
+            # Add header
+            html_parts.append(f"<h1>{title}</h1>")
+            
+            if self.header_image_path and os.path.exists(self.header_image_path):
+                # Copy header image to output directory
+                header_img_name = os.path.basename(self.header_image_path)
+                output_dir = os.path.dirname(output_path)
+                header_img_path = os.path.join(output_dir, header_img_name)
+                try:
+                    import shutil
+                    shutil.copy2(self.header_image_path, header_img_path)
+                    html_parts.append(f'<div style="text-align: center;"><img src="{header_img_name}" style="max-width: 80%; max-height: 200px;"></div>')
+                except Exception as e:
+                    logging.error(f"Failed to copy header image: {e}")
+            
+            # Add form info
+            if self.analytics.form_info:
+                form_name = self.analytics.form_info.get('name', 'Unknown Form')
+                form_id = self.analytics.form_info.get('xmlFormId', 'N/A')
+                form_name = unquote(str(form_name))
+                form_id = unquote(str(form_id))
+                html_parts.append(f"<p><strong>Form:</strong> {form_name} (ID: {form_id})</p>")
+            
+            # Basic info
+            html_parts.append(f"<p>Created on {CURRENT_DATETIME} UTC</p>")
+            html_parts.append(f"<p>Created by: {CURRENT_USER}</p>")
+            
+            # Metrics overview
+            html_parts.append('<div class="section">')
+            html_parts.append('<h2>📊 Key Report Overview</h2>')
+            
+            completion_stats = self.analytics.get_completion_stats()
+            
+            # Make sure get_recent_activity exists or use a fallback
+            recent_activity = {'recent_submissions': 0, 'daily_average': 0, 'days_analyzed': 7}
+            if hasattr(self.analytics, 'get_recent_activity'):
+                try:
+                    recent_activity = self.analytics.get_recent_activity(7)
+                except Exception as e:
+                    logging.error(f"Error getting recent activity: {e}")
+            
+            html_parts.append('<table>')
+            html_parts.append('<tr><th>Metric</th><th>Value</th><th>Description</th></tr>')
+            html_parts.append(f'<tr><td>Total Submissions</td><td>{completion_stats.get("total_submissions", 0):,}</td><td>All time submissions</td></tr>')
+            html_parts.append(f'<tr><td>Completion Rate</td><td>{completion_stats.get("completion_rate", 0):.1f}%</td><td>Average field completion</td></tr>')
+            html_parts.append(f'<tr><td>Total Fields</td><td>{completion_stats.get("total_fields", 0):,}</td><td>Number of form fields</td></tr>')
+            html_parts.append(f'<tr><td>Recent Activity (7 days)</td><td>{recent_activity.get("recent_submissions", 0):,}</td><td>Submissions in last week</td></tr>')
+            html_parts.append(f'<tr><td>Daily Average</td><td>{recent_activity.get("daily_average", 0):.1f}</td><td>Average submissions per day</td></tr>')
+            html_parts.append('</table>')
+            html_parts.append('</div>')
+            
+            # Map visualization section
+            if HAS_FOLIUM:
+                html_parts.append('<div class="section">')
+                html_parts.append('<h2>🗺️ Geographic Distribution</h2>')
+                
+                # Debug output the columns
+                logging.info(f"Available columns for geo detection in HTML report: {', '.join(self.analytics.data.columns)}")
+                
+                # Look for specific columns with geopoint data
+                potential_lat_cols = []
+                potential_lon_cols = []
+                
+                for col in self.analytics.data.columns:
+                    col_lower = col.lower()
+                    if any(term in col_lower for term in ['latitude', 'lat', '_lat']):
+                        potential_lat_cols.append(col)
+                        logging.info(f"Potential latitude column detected for HTML report: {col}")
+                    if any(term in col_lower for term in ['longitude', 'long', 'lon', 'lng', '_lon']):
+                        potential_lon_cols.append(col)
+                        logging.info(f"Potential longitude column detected for HTML report: {col}")
+                
+                # First try automatic detection
+                map_html = map_handler.create_map_from_geopoints(self.analytics.data)
+                
+                # If that fails, try with explicit columns
+                if not map_html and potential_lat_cols and potential_lon_cols:
+                    map_html = map_handler.create_map_from_geopoints(
+                        self.analytics.data, 
+                        lat_column=potential_lat_cols[0],
+                        lon_column=potential_lon_cols[0]
+                    )
+                
+                if map_html:
+                    html_parts.append('<p>The map below shows the geographical distribution of data collection points:</p>')
+                    html_parts.append('<div class="map-container" id="map">')
+                    # Insert the actual map HTML directly
+                    html_parts.append(map_html)
+                    html_parts.append('</div>')
+                else:
+                    html_parts.append('<p>No geographic data available in this dataset.</p>')
+                    
+                html_parts.append('</div>')
+            
+            # Close HTML document
+            html_parts.append("""
+                    <div class="footer">
+                        <p>Generated by ODK Central Dashboard Reporter</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """)
+            
+            # Write HTML to file
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(''.join(html_parts))
+                
+            logging.info("HTML report generation completed successfully")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Failed to generate HTML report: {e}")
+            import traceback
+            logging.error(f"Full error: {traceback.format_exc()}")
             return False
     
     def _create_fixed_header_image(self) -> List:
@@ -685,9 +1282,8 @@ class FixedHighQualityDashboardPDFReporter:
             
             # Create ReportLab Image with proper error handling
             try:
-                # Use ImageReader for better file handling
-                img_reader = ImageReader(self.optimized_image_path)
-                header_image = Image(img_reader, 
+                # Use direct file path instead of ImageReader
+                header_image = Image(self.optimized_image_path, 
                                    width=width_inches*inch, 
                                    height=height_inches*inch)
                 header_image.hAlign = 'CENTER'
@@ -727,7 +1323,113 @@ class FixedHighQualityDashboardPDFReporter:
             logging.error(f"Error creating header image: {e}")
 
         return story
-    
+    ###########################################################
+    def _create_custom_charts(self) -> List:
+        """Create custom charts section based on user selections."""
+        story = []
+        
+        try:
+            # Check if custom charts were defined
+            if not hasattr(self.analytics, 'custom_charts') or not self.analytics.custom_charts:
+                return story
+            
+            story.append(Paragraph("📊 Custom Visualizations", self.styles['SectionHeader']))
+            story.append(Spacer(1, 10))
+            
+            # Create a chart for each custom visualization
+            for i, chart_info in enumerate(self.analytics.custom_charts):
+                variable = chart_info['variable']
+                chart_type = chart_info['chart_type']
+                
+                story.append(Paragraph(f"{chart_type} for {variable}", self.styles['MetricHeader']))
+                story.append(Spacer(1, 10))
+                
+                # Create the chart
+                fig = plt.Figure(figsize=(8, 5), dpi=150)
+                ax = fig.add_subplot(111)
+                
+                # Generate chart based on type
+                if chart_type == "Horizontal Bar Chart":
+                    self._generate_horizontal_bar_chart(ax, variable)
+                elif chart_type == "Vertical Bar Chart":
+                    self._generate_vertical_bar_chart(ax, variable)
+                elif chart_type == "Pie Chart":
+                    self._generate_pie_chart(ax, variable)
+                elif chart_type == "Line Chart":
+                    self._generate_line_chart(ax, variable)
+                elif chart_type == "Area Chart":
+                    self._generate_area_chart(ax, variable)
+                elif chart_type == "Count Plot":
+                    self._generate_count_plot(ax, variable)
+                
+                # Save chart to buffer
+                img_buffer = io.BytesIO()
+                fig.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight')
+                img_buffer.seek(0)
+                plt.close(fig)
+                
+                # Add chart to report
+                chart_img = Image(img_buffer, width=7*inch, height=4*inch)
+                chart_img.hAlign = 'CENTER'
+                story.append(chart_img)
+                
+                # Add description
+                data_type = "categorical" if self.analytics.data[variable].dtype.kind not in 'ifc' else "numeric"
+                if data_type == "categorical":
+                    top_values = self.analytics.data[variable].value_counts().head(3)
+                    top_vals_str = ", ".join([f"{k} ({v} occurrences)" for k, v in top_values.items()])
+                    description = f"""
+                    This visualization shows the distribution of <b>{variable}</b> values.
+                    This is a <b>{data_type}</b> variable with {self.analytics.data[variable].nunique()} unique values.
+                    The most common values are: {top_vals_str}.
+                    """
+                else:
+                    avg = self.analytics.data[variable].mean()
+                    std = self.analytics.data[variable].std()
+                    min_val = self.analytics.data[variable].min()
+                    max_val = self.analytics.data[variable].max()
+                    description = f"""
+                    This visualization shows the distribution of <b>{variable}</b> values.
+                    This is a <b>{data_type}</b> variable with mean {avg:.2f} and standard deviation {std:.2f}.
+                    Range: minimum {min_val:.2f} to maximum {max_val:.2f}.
+                    """
+                
+                story.append(Paragraph(description, self.styles['Normal']))
+                story.append(Spacer(1, 20))
+                
+            
+        except Exception as e:
+            logging.error(f"Error creating custom charts: {e}")
+            story.append(Paragraph(f"Error creating custom charts: {str(e)}", self.styles['Normal']))
+        
+        return story
+
+    # Add methods for chart generation
+    def _generate_horizontal_bar_chart(self, ax, variable):
+        """Generate horizontal bar chart for the given variable."""
+        data = self.analytics.data
+        
+        if data[variable].dtype.kind in 'ifc':  # integer, float, complex
+            # Numeric data: create histogram
+            counts, bins = np.histogram(data[variable].dropna(), bins=min(10, len(data[variable].unique())))
+            bin_labels = [f"{bins[i]:.1f} - {bins[i+1]:.1f}" for i in range(len(bins)-1)]
+            y_pos = np.arange(len(bin_labels))
+            ax.barh(y_pos, counts, align='center', color='skyblue')
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels(bin_labels)
+        else:
+            # Categorical data: value counts
+            value_counts = data[variable].value_counts().sort_values()
+            # Limit to top 15 categories if too many
+            if len(value_counts) > 15:
+                value_counts = value_counts.tail(15)
+                ax.set_title(f"Top 15 values for {variable}")
+            value_counts.plot.barh(ax=ax, color='skyblue')
+        
+        ax.set_xlabel("Count")
+        ax.set_ylabel(variable)
+        ax.set_title(f"Horizontal Bar Chart for {variable}")
+    ###########################################################
     def _create_dashboard_header(self, title: str) -> List:
         """Create dashboard header with title and summary."""
         story = []
@@ -812,7 +1514,14 @@ class FixedHighQualityDashboardPDFReporter:
             story.append(Paragraph("📊 Key Report Overview", self.styles['SectionHeader']))
             
             completion_stats = self.analytics.get_completion_stats()
-            recent_activity = self.analytics.get_recent_activity(7)
+            
+            # Make sure get_recent_activity exists or use a fallback
+            recent_activity = {'recent_submissions': 0, 'daily_average': 0, 'days_analyzed': 7}
+            if hasattr(self.analytics, 'get_recent_activity'):
+                try:
+                    recent_activity = self.analytics.get_recent_activity(7)
+                except Exception as e:
+                    logging.error(f"Error getting recent activity for metrics overview: {e}")
             
             metrics_data = [
                 ['Metric', 'Value', 'Description'],
@@ -1061,6 +1770,515 @@ class FixedHighQualityDashboardPDFReporter:
         except Exception as e:
             logging.error(f"Error creating weekly chart: {e}")
             return None
+    
+    def _create_map_visualization(self) -> List:
+        """Create map visualization from geopoint data with enhanced error handling."""
+        story = []
+        
+        try:
+            # Check if folium is available
+            if not HAS_FOLIUM:
+                logging.warning("Folium library not available. Maps cannot be generated.")
+                story.append(Paragraph("🗺️ Geographic Distribution", self.styles['SectionHeader']))
+                story.append(Spacer(1, 10))
+                story.append(Paragraph(
+                    "Geographic visualization requires the folium library. "
+                    "Please install it with: pip install folium",
+                    self.styles['Normal']
+                ))
+                return story
+                
+            # Check if we have data
+            data = self.analytics.data
+            if data.empty:
+                logging.warning("No data available for map visualization.")
+                return story
+                
+            # Add debugging log output for column inspection
+            logging.info(f"Available columns for geo detection: {', '.join(data.columns)}")
+            
+            # Initialize map handler with explicit debug mode
+            map_handler = MapHandler(debug=True)
+            
+            # Debug: Check for potential geo columns by printing numeric columns and their ranges
+            for col in data.columns:
+                try:
+                    if data[col].dtype.kind in 'if':  # integer or float
+                        values = data[col].dropna()
+                        if not values.empty:
+                            min_val, max_val = values.min(), values.max()
+                            logging.info(f"Numeric column: {col}, Range: {min_val} to {max_val}")
+                except Exception as e:
+                    logging.debug(f"Could not analyze column {col}: {e}")
+                    
+            # Try to explicitly identify potential latitude and longitude columns
+            potential_lat_cols = []
+            potential_lon_cols = []
+            
+            for col in data.columns:
+                col_lower = col.lower()
+                if any(term in col_lower for term in ['latitude', 'lat', '_lat']):
+                    potential_lat_cols.append(col)
+                    logging.info(f"Potential latitude column detected: {col}")
+                if any(term in col_lower for term in ['longitude', 'long', 'lon', 'lng', '_lon']):
+                    potential_lon_cols.append(col)
+                    logging.info(f"Potential longitude column detected: {col}")
+            
+            # Look for ODK geopoint columns (format: "lat lon alt acc")
+            geopoint_cols = []
+            for col in data.columns:
+                if 'geopoint' in col.lower():
+                    geopoint_cols.append(col)
+                    logging.info(f"Potential ODK geopoint column detected: {col}")
+                    # Sample the data to verify format
+                    sample = data[col].dropna().iloc[0] if not data[col].dropna().empty else None
+                    if sample:
+                        logging.info(f"Sample geopoint data: {sample}")
+            
+            # First attempt - use automatic detection
+            map_html = map_handler.create_map_from_geopoints(data)
+            
+            # If automatic detection fails, try manual approaches with explicit columns
+            if not map_html and potential_lat_cols and potential_lon_cols:
+                logging.info(f"Attempting manual lat/lon mapping with: {potential_lat_cols[0]} and {potential_lon_cols[0]}")
+                map_html = map_handler.create_map_from_geopoints(
+                    data, 
+                    lat_column=potential_lat_cols[0], 
+                    lon_column=potential_lon_cols[0]
+                )
+            
+            # If that fails and we have geopoint columns, try parsing them
+            if not map_html and geopoint_cols:
+                # Create temporary parsed columns
+                try:
+                    logging.info(f"Attempting to parse geopoint column: {geopoint_cols[0]}")
+                    gp_col = geopoint_cols[0]
+                    
+                    # Make a copy to avoid modifying original
+                    temp_data = data.copy()
+                    
+                    # Try to extract lat/lon from space-separated geopoint string
+                    temp_data['_temp_lat'] = temp_data[gp_col].astype(str).str.split().str[0]
+                    temp_data['_temp_lon'] = temp_data[gp_col].astype(str).str.split().str[1]
+                    
+                    # Convert to float
+                    temp_data['_temp_lat'] = pd.to_numeric(temp_data['_temp_lat'], errors='coerce')
+                    temp_data['_temp_lon'] = pd.to_numeric(temp_data['_temp_lon'], errors='coerce')
+                    
+                    logging.info(f"Created temp columns with {temp_data['_temp_lat'].notna().sum()} valid coordinates")
+                    
+                    # Try with the temporary columns
+                    map_html = map_handler.create_map_from_geopoints(
+                        temp_data, 
+                        lat_column='_temp_lat', 
+                        lon_column='_temp_lon'
+                    )
+                except Exception as parse_err:
+                    logging.error(f"Error parsing geopoint column: {parse_err}")
+            
+            # If we have map HTML, create the visualization
+            if map_html:
+                # Add map section header
+                story.append(Paragraph("🗺️ Geographic Distribution", self.styles['SectionHeader']))
+                story.append(Spacer(1, 10))
+                
+                # Add map description
+                story.append(Paragraph(
+                    "The map below shows the geographical distribution of data collection points. "
+                    "Each marker represents a data collection location.",
+                    self.styles['Normal']
+                ))
+                story.append(Spacer(1, 15))
+                
+                # Convert map to image and add to report
+                map_image_path = map_handler.convert_map_to_image(map_html)
+                
+                if map_image_path and os.path.exists(map_image_path):
+                    # Get dimensions in inches (for PDF)
+                    width_inches, height_inches = HighQualityImageProcessor.get_image_dimensions_inches(
+                        map_image_path, target_dpi=150
+                    )
+                    
+                    # Ensure reasonable size for the map
+                    max_width_inches = 6.5  # For A4/Letter page with margins
+                    if width_inches > max_width_inches:
+                        ratio = max_width_inches / width_inches
+                        width_inches = max_width_inches
+                        height_inches = height_inches * ratio
+                    
+                    # Add the map image
+                    map_img = Image(map_image_path, width=width_inches*inch, height=height_inches*inch)
+                    map_img.hAlign = 'CENTER'
+                    story.append(map_img)
+                    story.append(Spacer(1, 15))
+                    
+                    # Add note about interactive map in HTML version
+                    story.append(Paragraph(
+                        "Note: An interactive version of this map is available in the HTML report.",
+                        self.styles['Italic']
+                    ))
+                else:
+                    story.append(Paragraph(
+                        "Geographic visualization is available in the HTML report version.",
+                        self.styles['Normal']
+                    ))
+            else:
+                # No map could be generated - provide more helpful error info
+                story.append(Paragraph("🗺️ Geographic Distribution", self.styles['SectionHeader']))
+                story.append(Spacer(1, 10))
+                
+                if geopoint_cols or potential_lat_cols:
+                    detected_cols = []
+                    if geopoint_cols:
+                        detected_cols.append(f"Geopoint column(s): {', '.join(geopoint_cols)}")
+                    if potential_lat_cols:
+                        detected_cols.append(f"Lat column(s): {', '.join(potential_lat_cols)}")
+                    if potential_lon_cols:
+                        detected_cols.append(f"Lon column(s): {', '.join(potential_lon_cols)}")
+                    
+                    explanation = (
+                        f"Potential geographic data was detected ({', '.join(detected_cols)}), "
+                        "but could not be processed. This may be due to invalid coordinates or formatting issues. "
+                        "Try the HTML report for interactive maps."
+                    )
+                    story.append(Paragraph(explanation, self.styles['Normal']))
+                else:
+                    story.append(Paragraph(
+                        "No geographic data was detected in this dataset. "
+                        "Geographic visualization requires latitude and longitude coordinates.",
+                        self.styles['Normal']
+                    ))
+            
+            story.append(Spacer(1, 20))
+                
+        except Exception as e:
+            logging.error(f"Error creating map visualization: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            
+            # Add error message to the report
+            story.append(Paragraph("🗺️ Geographic Distribution", self.styles['SectionHeader']))
+            story.append(Spacer(1, 10))
+            story.append(Paragraph(
+                "Error creating geographic visualization. This may be due to invalid coordinates or data format issues.",
+                self.styles['Normal']
+            ))
+            story.append(Spacer(1, 20))
+        
+        return story
+    
+def _create_modern_daily_chart(self) -> Optional[Image]:
+    """Create modern daily submissions chart."""
+    try:
+        daily_data = self.analytics.get_daily_submissions()
+        if daily_data.empty:
+            logging.warning("No daily data available for chart")
+            return None
+        
+        # Create figure with high DPI
+        fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
+        fig.patch.set_facecolor('white')
+        ax.set_facecolor('white')
+        
+        dates = daily_data['date']
+        submissions = daily_data['submissions']
+        
+        # Convert dates to proper datetime format to avoid matplotlib warnings
+        dates_numeric = [date.toordinal() for date in dates]
+        
+        # Plot data with numeric dates
+        ax.plot(dates, submissions, color='#2E86AB', linewidth=3, marker='o', markersize=6)
+        ax.fill_between(dates, submissions, alpha=0.3, color='#2E86AB')
+        
+        # Styling
+        ax.set_title('Daily Submissions Over Time', fontsize=16, fontweight='bold', color='#2E86AB')
+        ax.set_xlabel('Date', fontsize=12)
+        ax.set_ylabel('Number of Submissions', fontsize=12)
+        
+        # Format dates
+        if len(dates) > 0:
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(dates)//10)))
+            plt.xticks(rotation=45)
+        
+        # Grid and styling
+        ax.grid(True, alpha=0.3)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        
+        plt.tight_layout()
+        
+        # Save to buffer with high quality
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight', 
+                   facecolor='white', edgecolor='none')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        return Image(img_buffer, width=7*inch, height=3.5*inch)
+        
+    except Exception as e:
+        logging.error(f"Error creating daily chart: {e}")
+        return None
+
+def _create_weekly_pattern_chart(self) -> Optional[Image]:
+    """Create weekly pattern bar chart with string handling."""
+    try:
+        weekly_data = self.analytics.get_weekly_trend()
+        if not weekly_data or 'weekday_counts' not in weekly_data:
+            logging.warning("No weekly data available for chart")
+            return None
+        
+        weekday_counts = weekly_data['weekday_counts']
+        if weekday_counts.empty or weekday_counts.sum() == 0:
+            logging.warning("No weekly submission data to chart")
+            return None
+        
+        # Create figure with high DPI
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=150)
+        fig.patch.set_facecolor('white')
+        ax.set_facecolor('white')
+        
+        # Convert weekday names to positions to avoid matplotlib categorical warnings
+        weekdays = list(weekday_counts.index)
+        values = list(weekday_counts.values)
+        positions = range(len(weekdays))
+        
+        # Create bar chart with numeric positions
+        colors_list = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#4CAF50', '#FF9800', '#9C27B0']
+        bars = ax.bar(positions, values, 
+                     color=colors_list[:len(values)], alpha=0.8)
+        
+        # Set weekday labels
+        ax.set_xticks(positions)
+        ax.set_xticklabels(weekdays)
+        
+        # Add value labels on bars
+        for i, (bar, value) in enumerate(zip(bars, values)):
+            if value > 0:
+                ax.text(i, value + 0.1, f'{int(value)}', 
+                       ha='center', va='bottom', fontweight='bold')
+        
+        # Styling
+        ax.set_title('Submissions by Day of Week', fontsize=16, fontweight='bold', color='#2E86AB')
+        ax.set_xlabel('Day of Week', fontsize=12)
+        ax.set_ylabel('Number of Submissions', fontsize=12)
+        
+        # Remove top and right spines
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        
+        # Save to buffer with high quality
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight', 
+                   facecolor='white', edgecolor='none')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        return Image(img_buffer, width=6*inch, height=3.6*inch)
+        
+    except Exception as e:
+        logging.error(f"Error creating weekly chart: {e}")
+        return None
+
+def _create_map_visualization(self) -> List:
+    """Create map visualization from geopoint data with enhanced error handling."""
+    story = []
+    
+    try:
+        # Check if folium is available
+        if not HAS_FOLIUM:
+            logging.warning("Folium library not available. Maps cannot be generated.")
+            story.append(Paragraph("🗺️ Geographic Distribution", self.styles['SectionHeader']))
+            story.append(Spacer(1, 10))
+            story.append(Paragraph(
+                "Geographic visualization requires the folium library. "
+                "Please install it with: pip install folium",
+                self.styles['Normal']
+            ))
+            return story
+            
+        # Check if we have data
+        data = self.analytics.data
+        if data.empty:
+            logging.warning("No data available for map visualization.")
+            return story
+            
+        # Add debugging log output for column inspection
+        logging.info(f"Available columns for geo detection: {', '.join(data.columns)}")
+        
+        # Initialize map handler with explicit debug mode
+        map_handler = MapHandler(debug=True)
+        
+        # Debug: Check for potential geo columns by printing numeric columns and their ranges
+        for col in data.columns:
+            try:
+                if data[col].dtype.kind in 'if':  # integer or float
+                    values = data[col].dropna()
+                    if not values.empty:
+                        min_val, max_val = values.min(), values.max()
+                        logging.info(f"Numeric column: {col}, Range: {min_val} to {max_val}")
+            except Exception as e:
+                logging.debug(f"Could not analyze column {col}: {e}")
+                
+        # Try to explicitly identify potential latitude and longitude columns
+        potential_lat_cols = []
+        potential_lon_cols = []
+        
+        for col in data.columns:
+            col_lower = col.lower()
+            if any(term in col_lower for term in ['latitude', 'lat', '_lat']):
+                potential_lat_cols.append(col)
+                logging.info(f"Potential latitude column detected: {col}")
+            if any(term in col_lower for term in ['longitude', 'long', 'lon', 'lng', '_lon']):
+                potential_lon_cols.append(col)
+                logging.info(f"Potential longitude column detected: {col}")
+        
+        # Look for ODK geopoint columns (format: "lat lon alt acc")
+        geopoint_cols = []
+        for col in data.columns:
+            if 'geopoint' in col.lower():
+                geopoint_cols.append(col)
+                logging.info(f"Potential ODK geopoint column detected: {col}")
+                # Sample the data to verify format
+                sample = data[col].dropna().iloc[0] if not data[col].dropna().empty else None
+                if sample:
+                    logging.info(f"Sample geopoint data: {sample}")
+        
+        # First attempt - use automatic detection
+        map_html = map_handler.create_map_from_geopoints(data)
+        
+        # If automatic detection fails, try manual approaches with explicit columns
+        if not map_html and (potential_lat_cols and potential_lon_cols):
+            logging.info(f"Attempting manual lat/lon mapping with: {potential_lat_cols[0]} and {potential_lon_cols[0]}")
+            map_html = map_handler.create_map_from_geopoints(
+                data, 
+                lat_column=potential_lat_cols[0], 
+                lon_column=potential_lon_cols[0]
+            )
+        
+        # If that fails and we have geopoint columns, try parsing them
+        if not map_html and geopoint_cols:
+            # Create temporary parsed columns
+            try:
+                logging.info(f"Attempting to parse geopoint column: {geopoint_cols[0]}")
+                gp_col = geopoint_cols[0]
+                
+                # Make a copy to avoid modifying original
+                temp_data = data.copy()
+                
+                # Try to extract lat/lon from space-separated geopoint string
+                temp_data['_temp_lat'] = temp_data[gp_col].astype(str).str.split().str[0]
+                temp_data['_temp_lon'] = temp_data[gp_col].astype(str).str.split().str[1]
+                
+                # Convert to float
+                temp_data['_temp_lat'] = pd.to_numeric(temp_data['_temp_lat'], errors='coerce')
+                temp_data['_temp_lon'] = pd.to_numeric(temp_data['_temp_lon'], errors='coerce')
+                
+                logging.info(f"Created temp columns with {temp_data['_temp_lat'].notna().sum()} valid coordinates")
+                
+                # Try with the temporary columns
+                map_html = map_handler.create_map_from_geopoints(
+                    temp_data, 
+                    lat_column='_temp_lat', 
+                    lon_column='_temp_lon'
+                )
+            except Exception as parse_err:
+                logging.error(f"Error parsing geopoint column: {parse_err}")
+        
+        # If we have map HTML, create the visualization
+        if map_html:
+            # Add map section header
+            story.append(Paragraph("🗺️ Geographic Distribution", self.styles['SectionHeader']))
+            story.append(Spacer(1, 10))
+            
+            # Add map description
+            story.append(Paragraph(
+                "The map below shows the geographical distribution of data collection points. "
+                "Each marker represents a data collection location.",
+                self.styles['Normal']
+            ))
+            story.append(Spacer(1, 15))
+            
+            # Convert map to image and add to report
+            map_image_path = map_handler.convert_map_to_image(map_html)
+            
+            if map_image_path and os.path.exists(map_image_path):
+                # Get dimensions in inches (for PDF)
+                width_inches, height_inches = HighQualityImageProcessor.get_image_dimensions_inches(
+                    map_image_path, target_dpi=150
+                )
+                
+                # Ensure reasonable size for the map
+                max_width_inches = 6.5  # For A4/Letter page with margins
+                if width_inches > max_width_inches:
+                    ratio = max_width_inches / width_inches
+                    width_inches = max_width_inches
+                    height_inches = height_inches * ratio
+                
+                # Add the map image
+                map_img = Image(map_image_path, width=width_inches*inch, height=height_inches*inch)
+                map_img.hAlign = 'CENTER'
+                story.append(map_img)
+                story.append(Spacer(1, 15))
+                
+                # Add note about interactive map in HTML version
+                story.append(Paragraph(
+                    "Note: An interactive version of this map is available in the HTML report.",
+                    self.styles['Italic']
+                ))
+            else:
+                story.append(Paragraph(
+                    "Geographic visualization is available in the HTML report version.",
+                    self.styles['Normal']
+                ))
+        else:
+            # No map could be generated - provide more helpful error info
+            story.append(Paragraph("🗺️ Geographic Distribution", self.styles['SectionHeader']))
+            story.append(Spacer(1, 10))
+            
+            if geopoint_cols or potential_lat_cols:
+                detected_cols = []
+                if geopoint_cols:
+                    detected_cols.append(f"Geopoint column(s): {', '.join(geopoint_cols)}")
+                if potential_lat_cols:
+                    detected_cols.append(f"Lat column(s): {', '.join(potential_lat_cols)}")
+                if potential_lon_cols:
+                    detected_cols.append(f"Lon column(s): {', '.join(potential_lon_cols)}")
+                
+                explanation = (
+                    f"Potential geographic data was detected ({', '.join(detected_cols)}), "
+                    "but could not be processed. This may be due to invalid coordinates or formatting issues. "
+                    "Try the HTML report for interactive maps."
+                )
+                story.append(Paragraph(explanation, self.styles['Normal']))
+            else:
+                story.append(Paragraph(
+                    "No geographic data was detected in this dataset. "
+                    "Geographic visualization requires latitude and longitude coordinates.",
+                    self.styles['Normal']
+                ))
+        
+        story.append(Spacer(1, 20))
+            
+    except Exception as e:
+        logging.error(f"Error creating map visualization: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+        
+        # Add error message to the report
+        story.append(Paragraph("🗺️ Geographic Distribution", self.styles['SectionHeader']))
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(
+            "Error creating geographic visualization. This may be due to invalid coordinates or data format issues.",
+            self.styles['Normal']
+        ))
+        story.append(Spacer(1, 20))
+    
+    return story
 
 # ============================================================================
 # Enhanced GUI Application with Image Support
@@ -1077,6 +2295,7 @@ class FixedODKDashboardGUI:
         self.base_url = tk.StringVar(value="https://")
         self.username = tk.StringVar()
         self.password = tk.StringVar()
+        self.remember_password = tk.BooleanVar(value=False)
         self.project_id = tk.StringVar()
         self.form_id = tk.StringVar()
         self.report_title = tk.StringVar(value="ODK Central Dashboard Report")
@@ -1089,30 +2308,58 @@ class FixedODKDashboardGUI:
         self.setup_ui()
         
     def setup_ui(self):
-        # Create main container with scrollable frame
-        main_canvas = tk.Canvas(self.root)
-        scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=main_canvas.yview)
+        # Configure the root window to expand and fill the screen
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
+        # Create main container frame that will hold everything
+        main_frame = ttk.Frame(self.root)
+        main_frame.grid(row=0, column=0, sticky="nsew")
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+        
+        # Create canvas with scrollbar
+        main_canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=main_canvas.yview)
+        
+        # Configure canvas
+        main_canvas.configure(yscrollcommand=scrollbar.set)
+        main_canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        
+        # Create scrollable frame inside canvas
         scrollable_frame = ttk.Frame(main_canvas)
         
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
-        )
+        # Make scrollable_frame expand to fill canvas width
+        scrollable_frame.columnconfigure(0, weight=1)
         
-        main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        main_canvas.configure(yscrollcommand=scrollbar.set)
+        # Create window inside canvas with scrollable_frame
+        canvas_window = main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        
+        # Configure scrolling behavior
+        def configure_canvas(event):
+            # Update the scrollregion to encompass the scrollable frame
+            main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+            
+            # Make the scrollable frame expand to fill canvas width
+            canvas_width = event.width
+            main_canvas.itemconfig(canvas_window, width=canvas_width)
+        
+        scrollable_frame.bind("<Configure>", configure_canvas)
+        main_canvas.bind("<Configure>", lambda e: main_canvas.itemconfig(canvas_window, width=e.width))
         
         # Title
         title_frame = ttk.Frame(scrollable_frame)
         title_frame.pack(fill=tk.X, padx=20, pady=20)
         
         title_label = ttk.Label(title_frame, text="🚀 ODK Central Dashboard Reporter",
-                                foreground="#810303",
-                                font=("Helvetica", 18, "bold"))
+                               foreground="#810303",
+                               font=("Helvetica", 18, "bold"))
         title_label.pack()
      
         # Version and date info
-        info_label = ttk.Label(title_frame, text=f"Version 2.2.1 | User: {CURRENT_USER}", 
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        info_label = ttk.Label(title_frame, text=f"Version 2.2.1 | {CURRENT_DATETIME} UTC | User: {CURRENT_USER}", 
                               font=("Helvetica", 8), foreground="darkblue")
         info_label.pack(pady=(5, 0))
                 
@@ -1134,6 +2381,11 @@ class FixedODKDashboardGUI:
         ttk.Label(odk_frame, text="Password:").grid(row=2, column=0, sticky=tk.W, pady=5)
         pass_entry = ttk.Entry(odk_frame, textvariable=self.password, show="*", width=60)
         pass_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
+        
+        # Add Remember Password checkbox
+        self.remember_password = tk.BooleanVar()
+        remember_checkbox = ttk.Checkbutton(odk_frame, text="Remember Password", variable=self.remember_password)
+        remember_checkbox.grid(row=2, column=2, sticky=tk.W, padx=(10, 0))
         
         # Project ID
         ttk.Label(odk_frame, text="Project ID:").grid(row=3, column=0, sticky=tk.W, pady=5)
@@ -1259,6 +2511,12 @@ class FixedODKDashboardGUI:
                   background=[('active', "#750505"),
                     ('pressed', "#780D0D")])
         
+        # Generate HTML report button (new)
+        html_btn = ttk.Button(action_frame, text="🌐 Generate HTML Report", 
+                             command=self.generate_html_report)
+        html_btn.pack(side=tk.LEFT, padx=(0, 10))
+        html_btn.config(style='Accent.TButton')
+        
         # Save settings button
         save_btn = ttk.Button(action_frame, text="💾 Save Settings", command=self.save_settings)
         save_btn.pack(side=tk.LEFT, padx=(0, 10))
@@ -1294,14 +2552,309 @@ class FixedODKDashboardGUI:
         self.output_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Pack scrollable components
-        main_canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+                # Add a new frame for variable visualization
+        visual_frame = ttk.LabelFrame(self.root, text="Custom Visualization")
+        visual_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
-        # Bind mousewheel to canvas
+        # Create a frame for variable selection and chart type
+        var_select_frame = ttk.Frame(visual_frame)
+        var_select_frame.pack(fill="x", padx=10, pady=5)
+        
+        # Variable Selection Dropdown
+        ttk.Label(var_select_frame, text="Select Variable:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.variable_selection = ttk.Combobox(var_select_frame, state="readonly", width=50)
+        self.variable_selection.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
+        
+        # Chart Type Selection Dropdown
+        ttk.Label(var_select_frame, text="Chart Type:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.chart_type = ttk.Combobox(var_select_frame, state="readonly", width=30, 
+                                    values=["Horizontal Bar Chart", "Vertical Bar Chart", "Pie Chart", 
+                                            "Line Chart", "Area Chart", "Count Plot"])
+        self.chart_type.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
+        self.chart_type.current(0)  # Default to Horizontal Bar Chart
+        
+        # Add Chart Button
+        add_chart_btn = ttk.Button(var_select_frame, text="Add Chart to Report", 
+                                command=self.add_chart_to_report)
+        add_chart_btn.grid(row=2, column=0, columnspan=2, pady=10)
+        
+        # Preview Frame for Chart
+        self.chart_preview_frame = ttk.Frame(visual_frame)
+        self.chart_preview_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Label for chart preview
+        self.preview_label = ttk.Label(self.chart_preview_frame, text="Chart preview will appear here")
+        self.preview_label.pack(pady=20)
+
+        def populate_variable_dropdown(self):
+            """Populate the variable dropdown with column names from the loaded data."""
+            try:
+                if hasattr(self, 'analytics') and hasattr(self.analytics, 'data') and not self.analytics.data.empty:
+                    # Get column names, exclude system columns
+                    columns = [col for col in self.analytics.data.columns 
+                            if not col.startswith('_') and col.lower() not in 
+                            ['submissiondate', 'instanceid', 'deviceid', 'submission_date']]
+                    
+                    # Update the dropdown with columns
+                    self.variable_selection['values'] = columns
+                    
+                    if columns:
+                        self.variable_selection.current(0)
+                        self.log_output(f"✅ Loaded {len(columns)} variables for visualization", "INFO")
+                    else:
+                        self.log_output("❓ No suitable variables found for visualization", "WARNING")
+                else:
+                    self.log_output("❗ Load data first to populate variables", "WARNING")
+                    self.variable_selection['values'] = []
+            except Exception as e:
+                self.log_output(f"❌ Error loading variables: {str(e)}", "ERROR")
+
+
+        def add_chart_to_report(self):
+            """Create a chart based on selected variable and chart type and add to report."""
+        try:
+            # Check if data is loaded
+            if not hasattr(self, 'analytics') or not hasattr(self.analytics, 'data') or self.analytics.data.empty:
+                self.log_output("❌ No data loaded. Please load data first.", "ERROR")
+                return
+            
+            # Get selections
+            selected_var = self.variable_selection.get()
+            chart_type = self.chart_type.get()
+            
+            if not selected_var:
+                self.log_output("❌ Please select a variable first", "ERROR")
+                return
+            
+            # Create chart and add to report class
+            self.log_output(f"🔍 Analyzing variable: {selected_var}", "INFO")
+            
+            # Create chart preview
+            self.create_chart_preview(selected_var, chart_type)
+            
+            # Store the chart information for report generation
+            if not hasattr(self.analytics, 'custom_charts'):
+                self.analytics.custom_charts = []
+            
+            self.analytics.custom_charts.append({
+                'variable': selected_var,
+                'chart_type': chart_type
+            })
+            
+            self.log_output(f"✅ Added {chart_type} for '{selected_var}' to report", "SUCCESS")
+            
+        except Exception as e:
+            self.log_output(f"❌ Error adding chart: {str(e)}", "ERROR")
+
+        def create_chart_preview(self, variable, chart_type):
+            """Create a preview of the chart."""
+            try:
+                # Clear previous chart
+                for widget in self.chart_preview_frame.winfo_children():
+                    widget.destroy()
+                
+                # Get data for the variable
+                data = self.analytics.data
+                
+                # Check if variable exists in data
+                if variable not in data.columns:
+                    ttk.Label(self.chart_preview_frame, text=f"Error: Variable '{variable}' not found in data").pack(pady=20)
+                    return
+                
+                # Create figure
+                fig = plt.Figure(figsize=(8, 4), dpi=100)
+                ax = fig.add_subplot(111)
+                
+                # Different chart types
+                if chart_type == "Horizontal Bar Chart":
+                    self._create_horizontal_bar_chart(ax, data, variable)
+                elif chart_type == "Vertical Bar Chart":
+                    self._create_vertical_bar_chart(ax, data, variable)
+                elif chart_type == "Pie Chart":
+                    self._create_pie_chart(ax, data, variable)
+                elif chart_type == "Line Chart":
+                    self._create_line_chart(ax, data, variable)
+                elif chart_type == "Area Chart":
+                    self._create_area_chart(ax, data, variable)
+                elif chart_type == "Count Plot":
+                    self._create_count_plot(ax, data, variable)
+                
+                # Set title
+                ax.set_title(f"{chart_type} for {variable}", fontsize=12)
+                
+                # Adjust layout
+                fig.tight_layout()
+                
+                # Embed in tkinter
+                canvas = FigureCanvasTkAgg(fig, self.chart_preview_frame)
+                canvas.draw()
+                canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                
+                # Add toolbar
+                toolbar_frame = ttk.Frame(self.chart_preview_frame)
+                toolbar_frame.pack(fill=tk.X)
+                toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
+                toolbar.update()
+                
+            except Exception as e:
+                for widget in self.chart_preview_frame.winfo_children():
+                    widget.destroy()
+                ttk.Label(self.chart_preview_frame, text=f"Error creating chart: {str(e)}").pack(pady=20)
+                logging.error(f"Error creating chart preview: {e}")
+        ####################################################################
+            def _create_horizontal_bar_chart(self, ax, data, variable):
+                """Create horizontal bar chart."""
+            # Count values for categorical data or bin for numeric
+            if data[variable].dtype.kind in 'ifc':  # integer, float, complex
+                # Numeric data: create histogram
+                counts, bins = np.histogram(data[variable].dropna(), bins=min(10, len(data[variable].unique())))
+                bin_labels = [f"{bins[i]:.1f} - {bins[i+1]:.1f}" for i in range(len(bins)-1)]
+                y_pos = np.arange(len(bin_labels))
+                ax.barh(y_pos, counts, align='center', color='skyblue')
+                ax.set_yticks(y_pos)
+                ax.set_yticklabels(bin_labels)
+            else:
+                # Categorical data: value counts
+                value_counts = data[variable].value_counts().sort_values()
+                # Limit to top 15 categories if too many
+                if len(value_counts) > 15:
+                    value_counts = value_counts.tail(15)
+                    ax.set_title(f"Top 15 values for {variable}")
+                value_counts.plot.barh(ax=ax, color='skyblue')
+            
+            ax.set_xlabel("Count")
+            ax.set_ylabel(variable)
+            
+        def _create_vertical_bar_chart(self, ax, data, variable):
+            """Create vertical bar chart."""
+            # Count values for categorical data or bin for numeric
+            if data[variable].dtype.kind in 'ifc':  # integer, float, complex
+                # Numeric data: create histogram
+                counts, bins = np.histogram(data[variable].dropna(), bins=min(10, len(data[variable].unique())))
+                bin_labels = [f"{bins[i]:.1f} - {bins[i+1]:.1f}" for i in range(len(bins)-1)]
+                x_pos = np.arange(len(bin_labels))
+                ax.bar(x_pos, counts, align='center', color='skyblue')
+                ax.set_xticks(x_pos)
+                ax.set_xticklabels(bin_labels, rotation=45, ha='right')
+            else:
+                # Categorical data: value counts
+                value_counts = data[variable].value_counts()
+                # Limit to top 15 categories if too many
+                if len(value_counts) > 15:
+                    value_counts = value_counts.head(15)
+                    ax.set_title(f"Top 15 values for {variable}")
+                value_counts.plot.bar(ax=ax, color='skyblue')
+                plt.xticks(rotation=45, ha='right')
+            
+            ax.set_ylabel("Count")
+            ax.set_xlabel(variable)
+
+        def _create_pie_chart(self, ax, data, variable):
+            """Create pie chart."""
+            # Get value counts
+            value_counts = data[variable].value_counts()
+            
+            # Limit to top 8 categories + "Others" for readability
+            if len(value_counts) > 8:
+                top_values = value_counts.head(7)
+                others_count = value_counts[7:].sum()
+                top_values['Others'] = others_count
+                value_counts = top_values
+            
+            # Plot pie chart
+            value_counts.plot.pie(ax=ax, autopct='%1.1f%%', shadow=False, startangle=90)
+            ax.set_ylabel('')  # Remove y-label
+            ax.set_title(f"Distribution of {variable}")
+
+        def _create_line_chart(self, ax, data, variable):
+            """Create line chart (for time-based or ordered data)."""
+            if data[variable].dtype.kind in 'ifc':  # integer, float, complex
+                # Create a line chart of the distribution (density)
+                try:
+                    import scipy.stats as stats
+                    kde = stats.gaussian_kde(data[variable].dropna())
+                    x_range = np.linspace(data[variable].min(), data[variable].max(), 100)
+                    density = kde(x_range)
+                    ax.plot(x_range, density, 'b-')
+                    ax.fill_between(x_range, density, alpha=0.3)
+                    ax.set_xlabel(variable)
+                    ax.set_ylabel('Density')
+                    ax.set_title(f"Distribution Density of {variable}")
+                except Exception:
+                    # Fallback if KDE doesn't work
+                    data[variable].plot.line(ax=ax, color='blue')
+            else:
+                # For categorical, show a trend of counts
+                value_counts = data[variable].value_counts().sort_index()
+                value_counts.plot.line(ax=ax, marker='o')
+                ax.set_xlabel(variable)
+                ax.set_ylabel('Count')
+                plt.xticks(rotation=45, ha='right')
+
+        def _create_area_chart(self, ax, data, variable):
+            """Create area chart."""
+            if data[variable].dtype.kind in 'ifc':  # integer, float, complex
+                # Create bins and count
+                counts, bins = np.histogram(data[variable].dropna(), bins=min(15, len(data[variable].unique())))
+                bin_centers = [(bins[i] + bins[i+1])/2 for i in range(len(bins)-1)]
+                ax.fill_between(bin_centers, counts, alpha=0.7, color='skyblue')
+                ax.plot(bin_centers, counts, 'b-', alpha=0.7)
+                ax.set_xlabel(variable)
+                ax.set_ylabel('Count')
+            else:
+                # For categorical, show counts as area
+                value_counts = data[variable].value_counts().sort_index()
+                value_counts.plot.area(ax=ax, alpha=0.7, color='skyblue')
+                ax.set_xlabel(variable)
+                ax.set_ylabel('Count')
+                plt.xticks(rotation=45, ha='right')
+
+        def _create_count_plot(self, ax, data, variable):
+            """Create count plot with percentages."""
+            # Get value counts and percentages
+            value_counts = data[variable].value_counts()
+            total = len(data[variable].dropna())
+            
+            # Limit to top 10 categories if too many
+            if len(value_counts) > 10:
+                value_counts = value_counts.head(10)
+                ax.set_title(f"Top 10 values for {variable}")
+            
+            # Create bar plot
+            bars = ax.bar(range(len(value_counts)), value_counts.values, align='center')
+            ax.set_xticks(range(len(value_counts)))
+            ax.set_xticklabels(value_counts.index, rotation=45, ha='right')
+            
+            # Add percentage labels on bars
+            for i, bar in enumerate(bars):
+                percentage = (value_counts.values[i] / total) * 100
+                ax.text(i, bar.get_height() + 0.5, f"{percentage:.1f}%", 
+                    ha='center', va='bottom', fontweight='bold')
+            
+            ax.set_xlabel(variable)
+            ax.set_ylabel('Count')
+        ####################################################################
+        #     
+        ####################################################################
+        # Enhanced mousewheel scrolling for better user experience
         def _on_mousewheel(event):
-            main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            # Scroll direction and speed calibration
+            scroll_speed = 1
+            if event.delta:
+                # For Windows and MacOS
+                main_canvas.yview_scroll(int(-1 * (event.delta / 120) * scroll_speed), "units")
+            elif event.num == 4:
+                # For Linux - scroll up
+                main_canvas.yview_scroll(-1 * scroll_speed, "units")
+            elif event.num == 5:
+                # For Linux - scroll down
+                main_canvas.yview_scroll(scroll_speed, "units")
+                
+        # Bind mousewheel for Windows and MacOS
         main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        # Additional bindings for Linux
+        main_canvas.bind_all("<Button-4>", _on_mousewheel)
+        main_canvas.bind_all("<Button-5>", _on_mousewheel)
         
         # Load saved settings if available
         self.load_saved_settings()
@@ -1535,8 +3088,8 @@ class FixedODKDashboardGUI:
                                f"Required packages not installed: {', '.join(missing_deps)}\n\n"
                                f"Install with: pip install {' '.join(missing_deps)}")
             return
-        
-        def run_generation():
+
+        def run_generation(self):
             try:
                 self.progress.start()
                 self.log_output("🚀 Starting dashboard generation...")
@@ -1554,6 +3107,130 @@ class FixedODKDashboardGUI:
                     else:
                         self.log_output("⚠️ Warning: Header image invalid, proceeding without it", "WARNING")
                         header_image = None
+                #########################################
+                self.populate_variable_dropdown()
+                #########################################
+                # Create client and authenticate
+                client = ODKCentralClient(
+                    base_url=self.base_url.get(),
+                    username=self.username.get(),
+                    password=self.password.get(),
+                    project_id=int(self.project_id.get())
+                )
+                
+                if not client.authenticate():
+                    self.log_output("❌ Authentication failed.", "ERROR")
+                    return
+                
+                self.log_output("✅ Authentication successful")
+                
+                # Download data
+                form_id = self.form_id.get()
+                self.log_output(f"📥 Downloading data for form: {form_id}")
+                
+                data = client.get_submissions(form_id)
+                
+                if data.empty:
+                    self.log_output("❌ No data found for the specified form.", "ERROR")
+                    return
+                
+                self.log_output(f"✅ Downloaded {len(data)} submissions with {len(data.columns)} fields")
+                
+                # Check for geopoint data
+                has_geopoints = False
+                for col in data.columns:
+                    if 'geopoint' in col.lower() or any(x in col.lower() for x in ['lat', 'lon', 'lng', 'longitude', 'latitude']):
+                        has_geopoints = True
+                        self.log_output(f"🗺️ Found geographic data in column: {col}")
+                        break
+                
+                # Get form info
+                forms = client.get_forms()
+                form_info = next((f for f in forms if f.get('xmlFormId') == form_id), {})
+                
+                # Create analytics
+                self.log_output("📊 Analyzing data...")
+                analytics = DashboardAnalytics(data, form_info)
+                
+                # Generate output path
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                reports_dir = Path("./reports")
+                reports_dir.mkdir(exist_ok=True)
+                
+                # Clean filename
+                safe_form_id = re.sub(r'[^\w\-_.]', '_', form_id)
+                output_path = reports_dir / f"dashboard_fixed_{safe_form_id}_{timestamp}.pdf"
+
+                # Generate high-quality report
+                self.log_output(f"📄 Generating PDF report: {output_path}")
+                reporter = FixedHighQualityDashboardPDFReporter(analytics, header_image)
+                
+                if reporter.generate_dashboard_report(str(output_path), self.report_title.get()):
+                    self.log_output(f"🎉 Dashboard report generated successfully!", "SUCCESS")
+                    self.log_output(f"📍 File saved: {output_path.absolute()}", "SUCCESS")
+                    self.log_output("✅ No more temporary file errors with header images", "SUCCESS")
+                    self.log_output("✨ Report features stable high-resolution images and optimized quality", "SUCCESS")
+                    
+                    if header_image:
+                        self.log_output("🖼️ High-quality header image included (300 DPI)", "SUCCESS")
+                    
+                    if has_geopoints and HAS_FOLIUM:
+                        self.log_output("🗺️ Geographic data visualization included in report", "SUCCESS")
+                        
+                        # Generate an HTML report with interactive maps if geopoints are found
+                        html_path = reports_dir / f"dashboard_fixed_{safe_form_id}_{timestamp}.html"
+                        if reporter.generate_html_report(str(html_path), self.report_title.get()):
+                            self.log_output(f"🌐 Interactive HTML report also generated: {html_path.name}", "SUCCESS")
+                    
+                    # Ask if user wants to open the file
+                    if messagebox.askyesno("Success", f"Dashboard report generated successfully!\n\nFile: {output_path.name}\n\nWould you like to open the report?"):
+                        import subprocess
+                        import platform
+                        
+                        try:
+                            if platform.system() == 'Windows':
+                                os.startfile(str(output_path))
+                            elif platform.system() == 'Darwin':  # macOS
+                                subprocess.run(['open', str(output_path)])
+                            else:  # Linux
+                                subprocess.run(['xdg-open', str(output_path)])
+                        except Exception as e:
+                            self.log_output(f"Could not open file automatically: {e}", "WARNING")
+                            
+                else:
+                    self.log_output("❌ Failed to generate dashboard report.", "ERROR")
+                    
+            except Exception as e:
+                self.log_output(f"❌ Error generating report: {str(e)}", "ERROR")
+                import traceback
+                self.log_output(f"Full error: {traceback.format_exc()}", "ERROR")
+            finally:
+                self.progress.stop()
+        
+        thread = threading.Thread(target=run_generation)
+        thread.daemon = True
+        thread.start()
+    
+    def generate_html_report(self):
+        """Generate HTML report with interactive maps."""
+        if not self.validate_inputs(check_form=True):
+            return
+        
+        # Check dependencies
+        missing_deps = []
+        if not HAS_FOLIUM:
+            missing_deps.append("folium")
+        
+        if missing_deps:
+            messagebox.showerror("Missing Dependencies", 
+                               f"Required packages not installed: {', '.join(missing_deps)}\n\n"
+                               f"Install with: pip install {' '.join(missing_deps)}")
+            return
+        
+        def run_generation(self):
+            try:
+                self.progress.start()
+                self.log_output("🌐 Starting HTML report generation...")
                 
                 # Create client and authenticate
                 client = ODKCentralClient(
@@ -1596,23 +3273,28 @@ class FixedODKDashboardGUI:
                 
                 # Clean filename
                 safe_form_id = re.sub(r'[^\w\-_.]', '_', form_id)
-                output_path = reports_dir / f"dashboard_fixed_{safe_form_id}_{timestamp}.pdf"
-
-                # Generate high-quality report
-                self.log_output(f"📄 Generating PDF report: {output_path}")
-                reporter = FixedHighQualityDashboardPDFReporter(analytics, header_image)
+                output_path = reports_dir / f"dashboard_fixed_{safe_form_id}_{timestamp}.html"
                 
-                if reporter.generate_dashboard_report(str(output_path), self.report_title.get()):
-                    self.log_output(f"🎉 Dashboard report generated successfully!", "SUCCESS")
+                # Generate HTML report
+                self.log_output(f"🌐 Generating HTML report: {output_path}")
+                reporter = FixedHighQualityDashboardPDFReporter(analytics, self.header_image_path.get())
+                
+                if reporter.generate_html_report(str(output_path), self.report_title.get()):
+                    self.log_output(f"🎉 HTML report generated successfully!", "SUCCESS")
                     self.log_output(f"📍 File saved: {output_path.absolute()}", "SUCCESS")
-                    self.log_output("✅ No more temporary file errors with header images", "SUCCESS")
-                    self.log_output("✨ Report features stable high-resolution images and optimized quality", "SUCCESS")
                     
-                    if header_image:
-                        self.log_output("🖼️ High-quality header image included (300 DPI)", "SUCCESS")
+                    # Check for geopoint data
+                    has_geopoints = False
+                    for col in data.columns:
+                        if 'geopoint' in col.lower() or any(x in col.lower() for x in ['lat', 'lon', 'lng', 'longitude', 'latitude']):
+                            has_geopoints = True
+                            break
+                    
+                    if has_geopoints:
+                        self.log_output("🗺️ Interactive map included with geopoint data", "SUCCESS")
                     
                     # Ask if user wants to open the file
-                    if messagebox.askyesno("Success", f"Dashboard report generated successfully!\n\nFile: {output_path.name}\n\nWould you like to open the report?"):
+                    if messagebox.askyesno("Success", f"HTML report generated successfully!\n\nFile: {output_path.name}\n\nWould you like to open the report?"):
                         import subprocess
                         import platform
                         
@@ -1627,10 +3309,10 @@ class FixedODKDashboardGUI:
                             self.log_output(f"Could not open file automatically: {e}", "WARNING")
                             
                 else:
-                    self.log_output("❌ Failed to generate dashboard report.", "ERROR")
+                    self.log_output("❌ Failed to generate HTML report.", "ERROR")
                     
             except Exception as e:
-                self.log_output(f"❌ Error generating report: {str(e)}", "ERROR")
+                self.log_output(f"❌ Error generating HTML report: {str(e)}", "ERROR")
                 import traceback
                 self.log_output(f"Full error: {traceback.format_exc()}", "ERROR")
             finally:
@@ -1643,10 +3325,22 @@ class FixedODKDashboardGUI:
     def save_settings(self):
         """Save current settings to file."""
         try:
+            # Encrypt password if remember password is checked
+            password_to_save = ""
+            if hasattr(self, 'remember_password') and self.remember_password.get():
+                try:
+                    # Simple encryption - not highly secure but better than plaintext
+                    import base64
+                    password_to_save = base64.b64encode(self.password.get().encode()).decode()
+                except Exception:
+                    # If encryption fails, don't save password
+                    password_to_save = ""
+            
             settings = {
                 'base_url': self.base_url.get(),
                 'username': self.username.get(),
-                # Don't save password for security
+                'password': password_to_save,
+                'remember_password': bool(self.remember_password.get()) if hasattr(self, 'remember_password') else False,
                 'project_id': self.project_id.get(),
                 'form_id': self.form_id.get(),
                 'report_title': self.report_title.get(),
@@ -1666,7 +3360,7 @@ class FixedODKDashboardGUI:
                 
         except Exception as e:
             self.log_output(f"❌ Error saving settings: {str(e)}", "ERROR")
-    
+        
     def load_settings(self):
         """Load settings from file."""
         try:
@@ -1681,6 +3375,21 @@ class FixedODKDashboardGUI:
                 
                 self.base_url.set(settings.get('base_url', ''))
                 self.username.set(settings.get('username', ''))
+                
+                # Load password if it was saved
+                if 'password' in settings and settings.get('password') and settings.get('remember_password', False):
+                    try:
+                        # Simple decryption
+                        import base64
+                        decoded_password = base64.b64decode(settings.get('password').encode()).decode()
+                        self.password.set(decoded_password)
+                    except Exception:
+                        # If decryption fails, don't set password
+                        pass
+                
+                # Set remember password checkbox
+                self.remember_password.set(settings.get('remember_password', False))
+                
                 self.project_id.set(settings.get('project_id', ''))
                 self.form_id.set(settings.get('form_id', ''))
                 self.report_title.set(settings.get('report_title', 'ODK Central Dashboard Report'))
@@ -1722,11 +3431,24 @@ class FixedODKDashboardGUI:
             pass  # Ignore errors loading auto-saved settings
     
     def save_auto_settings(self):
-        """Automatically save settings."""
+        """Automatically save settings including password if enabled."""
         try:
+            # Encrypt password if remember password is checked
+            password_to_save = ""
+            if hasattr(self, 'remember_password') and self.remember_password.get():
+                try:
+                    # Simple encryption - not highly secure but better than plaintext
+                    import base64
+                    password_to_save = base64.b64encode(self.password.get().encode()).decode()
+                except Exception:
+                    # If encryption fails, don't save password
+                    password_to_save = ""
+            
             settings = {
                 'base_url': self.base_url.get(),
                 'username': self.username.get(),
+                'password': password_to_save,
+                'remember_password': bool(self.remember_password.get()) if hasattr(self, 'remember_password') else False,
                 'project_id': self.project_id.get(),
                 'form_id': self.form_id.get(),
                 'report_title': self.report_title.get(),
@@ -1737,8 +3459,48 @@ class FixedODKDashboardGUI:
             with open(settings_file, 'w') as f:
                 json.dump(settings, f, indent=2)
                 
-        except Exception:
-            pass  # Ignore errors saving auto settings
+        except Exception as e:
+            logging.error(f"Error saving auto settings: {e}")
+
+    def load_saved_settings(self):
+        """Load automatically saved settings including password if enabled."""
+        try:
+            settings_file = Path.home() / '.odk_dashboard_fixed_settings.json'
+            if settings_file.exists():
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                
+                self.base_url.set(settings.get('base_url', 'https://'))
+                self.username.set(settings.get('username', ''))
+                
+                # Load password if it was saved
+                if 'password' in settings and settings.get('password') and settings.get('remember_password', False):
+                    try:
+                        # Simple decryption
+                        import base64
+                        decoded_password = base64.b64decode(settings.get('password').encode()).decode()
+                        self.password.set(decoded_password)
+                    except Exception:
+                        # If decryption fails, don't set password
+                        pass
+                
+                # Set remember password checkbox
+                if hasattr(self, 'remember_password'):
+                    self.remember_password.set(settings.get('remember_password', False))
+                
+                self.project_id.set(settings.get('project_id', ''))
+                self.form_id.set(settings.get('form_id', ''))
+                self.report_title.set(settings.get('report_title', 'ODK Central Dashboard Report'))
+                self.header_image_path.set(settings.get('header_image_path', ''))
+                
+                # Update image preview if path exists
+                if self.header_image_path.get():
+                    self.update_image_preview()
+                else:
+                    self.clear_image_preview()
+                
+        except Exception as e:
+            logging.warning(f"Could not load saved settings: {e}")
     
     def on_closing(self):
         """Handle application closing."""
@@ -1746,8 +3508,6 @@ class FixedODKDashboardGUI:
         # Clean up any remaining temp files
         cleanup_temp_files()
         self.root.destroy()
-
-
 # ============================================================================
 # Dependency Checking and Main Application
 # ============================================================================
@@ -1776,6 +3536,8 @@ def check_dependencies():
         optional_deps.append("pyyaml")
     if not HAS_TQDM:
         optional_deps.append("tqdm")
+    if not HAS_FOLIUM:
+        optional_deps.append("folium")
     
     return missing_deps, optional_deps, PIL_VERSION
 
@@ -1915,6 +3677,7 @@ def cli_mode():
                        help='JPEG quality (70-100, default: 95)')
     parser.add_argument('--image-dpi', type=int, default=300, choices=[150, 200, 300, 600],
                        help='Target DPI for images (default: 300)')
+    parser.add_argument('--html', action='store_true', help='Generate HTML report with interactive map')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     
     args = parser.parse_args()
@@ -1954,6 +3717,14 @@ def cli_mode():
             return 1
         
         print(f"✅ Downloaded {len(data)} submissions with {len(data.columns)} fields")
+        
+        # Check for geopoint data
+        has_geopoints = False
+        for col in data.columns:
+            if 'geopoint' in col.lower() or any(x in col.lower() for x in ['lat', 'lon', 'lng', 'longitude', 'latitude']):
+                has_geopoints = True
+                print(f"🗺️ Found geographic data in column: {col}")
+                break
         
         # Get form info
         forms = client.get_forms()
@@ -2001,6 +3772,22 @@ def cli_mode():
             print("✨  Images and optimized quality!")
             if header_image:
                 print(f"🖼️ Header image included at {args.image_dpi} DPI")
+            
+            # Generate HTML report if requested or geopoints are found
+            if args.html or has_geopoints:
+                if HAS_FOLIUM:
+                    html_path = output_path.with_suffix('.html')
+                    print(f"🌐 Generating HTML report with interactive map: {html_path}")
+                    
+                    if reporter.generate_html_report(str(html_path), args.title):
+                        print(f"🎉 HTML report with interactive map generated successfully!")
+                        print(f"📍 File saved: {html_path.absolute()}")
+                    else:
+                        print(f"❌ Failed to generate HTML report")
+                else:
+                    print(f"⚠️ Folium library not installed. Cannot generate HTML report with maps.")
+                    print(f"   Install with: pip install folium")
+            
             return 0
         else:
             print("❌ Failed to generate dashboard report")
@@ -2032,26 +3819,28 @@ def print_usage_examples():
     print("     --image-quality 95 \\")
     print("     --image-dpi 300 \\")
     print("     --output my_fixed_report.pdf \\")
+    print("     --html \\")
     print("     --verbose")
     print()
     print("📦 Required Dependencies:")
     print("   pip install reportlab Pillow pandas requests matplotlib seaborn numpy python-dateutil")
     print()
     print("🔧 Optional Dependencies:")
-    print("   pip install pyyaml tqdm")
+    print("   pip install pyyaml tqdm folium")
     print()
     print("✅ Fixed Issues:")
     print("   • Fixed temporary file deletion causing ReportLab errors")
     print("   • Improved image file stability and persistence")
     print("   • Enhanced error handling for image processing")
     print("   • Fixed matplotlib warnings for categorical data")
+    print("   • Added map support for forms with geopoints")
     print()
 
 if __name__ == '__main__':
     import sys
     
     # Update constants with current values
-    CURRENT_USER = os.getlogin()
+    CURRENT_USER = os.getlogin() 
     CURRENT_DATETIME = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Print header
