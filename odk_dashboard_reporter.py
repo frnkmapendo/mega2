@@ -855,7 +855,6 @@ class DashboardAnalytics:
                 col_lower = col.lower()
                 if any(keyword in col_lower for keyword in ['submit', 'date', 'time', 'created', 'start', 'end']):
                     date_columns.append(col)
-            
             if date_columns:
                 # Try each date column until we find one that works
                 for date_col in date_columns:
@@ -879,7 +878,7 @@ class DashboardAnalytics:
                 
         except Exception as e:
             logging.error(f"Error preparing data: {e}")
-    
+
     def get_daily_submissions(self) -> pd.DataFrame:
         """Get daily submission counts."""
         if self.date_column is None or self.data.empty:
@@ -932,10 +931,12 @@ class DashboardAnalytics:
                 'total_submissions': len(self.data),
                 'avg_completed_fields': filled_cells / len(self.data) if len(self.data) > 0 else 0
             }
+        
         except Exception as e:
             logging.error(f"Error calculating completion stats: {e}")
             return {'completion_rate': 0, 'total_fields': 0, 'avg_completed': 0, 'total_submissions': 0}
-    
+                 # After data is loaded
+
 def get_recent_activity(self, days: int = 7) -> Dict[str, Any]:
     """Get recent activity statistics."""
     if self.date_column is None or self.data.empty:
@@ -1033,7 +1034,7 @@ class FixedHighQualityDashboardPDFReporter:
                 story.extend(self._create_custom_charts())
 
             # Build the PDF
-            doc.build(story)
+            #doc.build(story)
 ##################################################################################
             # Pre-process header image if provided
             if self.header_image_path and HighQualityImageProcessor.validate_image(self.header_image_path):
@@ -2550,6 +2551,27 @@ class FixedODKDashboardGUI:
         self.output_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # Enhanced mousewheel scrolling for better user experience
+        def _on_mousewheel(event):
+            # Scroll direction and speed calibration
+            scroll_speed = 1
+            if event.delta:
+                # For Windows and MacOS
+                main_canvas.yview_scroll(int(-1 * (event.delta / 120) * scroll_speed), "units")
+            elif event.num == 4:
+                # For Linux - scroll up
+                main_canvas.yview_scroll(-1 * scroll_speed, "units")
+            elif event.num == 5:
+                # For Linux - scroll down
+                main_canvas.yview_scroll(scroll_speed, "units")
+                
+        # Bind mousewheel for Windows and MacOS
+        main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        # Additional bindings for Linux
+        main_canvas.bind_all("<Button-4>", _on_mousewheel)
+        main_canvas.bind_all("<Button-5>", _on_mousewheel)
+
+
         # Add a new frame for variable visualization
         visual_frame = ttk.LabelFrame(scrollable_frame, text="Custom Visualization")
         visual_frame.pack(fill="both", expand=True, padx=20, pady=10)
@@ -2834,28 +2856,7 @@ class FixedODKDashboardGUI:
         ax.set_xlabel(variable)
         ax.set_ylabel('Count')
         ####################################################################
-        #     
         ####################################################################
-        # Enhanced mousewheel scrolling for better user experience
-        def _on_mousewheel(event):
-            # Scroll direction and speed calibration
-            scroll_speed = 1
-            if event.delta:
-                # For Windows and MacOS
-                main_canvas.yview_scroll(int(-1 * (event.delta / 120) * scroll_speed), "units")
-            elif event.num == 4:
-                # For Linux - scroll up
-                main_canvas.yview_scroll(-1 * scroll_speed, "units")
-            elif event.num == 5:
-                # For Linux - scroll down
-                main_canvas.yview_scroll(scroll_speed, "units")
-                
-        # Bind mousewheel for Windows and MacOS
-        main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        # Additional bindings for Linux
-        main_canvas.bind_all("<Button-4>", _on_mousewheel)
-        main_canvas.bind_all("<Button-5>", _on_mousewheel)
-        
         # Load saved settings if available
         self.load_saved_settings()
     
@@ -3089,7 +3090,7 @@ class FixedODKDashboardGUI:
                                f"Install with: pip install {' '.join(missing_deps)}")
             return
 
-        def run_generation(self):
+        def run_generation():
             try:
                 self.progress.start()
                 self.log_output("🚀 Starting dashboard generation...")
@@ -3227,7 +3228,7 @@ class FixedODKDashboardGUI:
                                f"Install with: pip install {' '.join(missing_deps)}")
             return
         
-        def run_generation(self):
+        def run_generation():
             try:
                 self.progress.start()
                 self.log_output("🌐 Starting HTML report generation...")
