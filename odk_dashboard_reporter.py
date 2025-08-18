@@ -2292,7 +2292,7 @@ class FixedODKDashboardGUI:
         self.root.title("Dashboard Reporter")
         self.root.geometry("850x850")
         self.root.resizable(True, True)
-        
+
         # Variables
         self.base_url = tk.StringVar(value="https://")
         self.username = tk.StringVar()
@@ -2302,7 +2302,10 @@ class FixedODKDashboardGUI:
         self.form_id = tk.StringVar()
         self.report_title = tk.StringVar(value="ODK Central Dashboard Report")
         self.header_image_path = tk.StringVar()
-        
+
+        # Add an explicit StringVar bound to the variable selection combobox so we can display messages
+        self.selected_variable = tk.StringVar(value="")  
+
         # Style
         self.style = ttk.Style()
         self.style.theme_use('classic')
@@ -2580,10 +2583,11 @@ class FixedODKDashboardGUI:
         # Create a frame for variable selection and chart type
         var_select_frame = ttk.Frame(visual_frame)
         var_select_frame.pack(fill="x", padx=10, pady=5)
-        
+    ###########################################################################################################    
         # Variable Selection Dropdown
         ttk.Label(var_select_frame, text="Select Variable:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.variable_selection = ttk.Combobox(var_select_frame, state="readonly", width=50)
+        # Start disabled — it will be enabled when variables are loaded
+        self.variable_selection = ttk.Combobox(var_select_frame, textvariable=self.selected_variable, state="disabled", width=50)
         self.variable_selection.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
         
         # Chart Type Selection Dropdown
@@ -2591,9 +2595,26 @@ class FixedODKDashboardGUI:
         self.chart_type = ttk.Combobox(var_select_frame, state="readonly", width=30, 
                                     values=["Horizontal Bar Chart", "Vertical Bar Chart", "Pie Chart", 
                                             "Line Chart", "Area Chart", "Count Plot"])
-        self.chart_type.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
+        self.chart_type.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))        
+##########################################################################################
+        # Message label shown to the right of the combobox
+        self.no_data_label = ttk.Label(var_select_frame, text="", foreground="red", font=("Helvetica", 10))
+        self.no_data_label.grid(row=0, column=2, sticky=tk.W, padx=(10,0))
+
+        # Reload Data button — use the reload_data method which can be kept for any additional logic
+        reload_btn = ttk.Button(var_select_frame, text="Reload Data", command=self.reload_data)
+        reload_btn.grid(row=0, column=3, padx=(10,0))
+        reload_btn.config(style='Accent.TButton')
+        self.style.configure('Accent.TButton',
+                              borderwidth=1,
+                              relief="flat",
+                              background="#4CAF50",
+                              foreground="white",
+                              font=("Helvetica", 10, "bold"))
+
+# Ensure chart_type remains as-is; set default after creating it:
         self.chart_type.current(0)  # Default to Horizontal Bar Chart
-        
+###########################################################################################        
         # Make column 1 expandable
         var_select_frame.columnconfigure(1, weight=1)
         
@@ -2624,27 +2645,62 @@ class FixedODKDashboardGUI:
                               font=("Helvetica", 10, "bold"))
 
     def populate_variable_dropdown(self):
+        """
+        Populate the variable combobox with columns from self.analytics.data.
+        When no data is present, disable the combobox and show a clear message.
+        """
         try:
-            if hasattr(self, 'analytics') and hasattr(self.analytics, 'data') and not self.analytics.data.empty:
-                columns = [col for col in self.analytics.data.columns 
-                        if not col.startswith('_') and col.lower() not in 
-                        ['submissiondate', 'instanceid', 'deviceid', 'submission_date']]
-                self.variable_selection['values'] = columns
-                self.no_data_label.config(text="")
+            # Clear any previous displayed text and values
+            try:
+                self.variable_selection.set('')  # clear displayed text
+            except Exception:
+                pass
+            self.variable_selection['values'] = []
+
+            # Check analytics object and DataFrame presence
+            if hasattr(self, 'analytics') and getattr(self.analytics, 'data', None) is not None and not self.analytics.data.empty:
+                # Filter out internal columns and common meta columns
+                columns = [
+                    col for col in self.analytics.data.columns
+                    if not col.startswith('_') and col.lower() not in
+                    ['submissiondate', 'instanceid', 'deviceid', 'submission_date']
+                ]
+
                 if columns:
-                    self.variable_selection.current(0)
+                    # Enable combobox and fill values
+                    self.variable_selection.config(state='readonly', values=columns)
+                    # Select the first variable by default
+                    try:
+                        self.variable_selection.current(0)
+                    except Exception:
+                        # If current fails for some reason, set via the StringVar
+                        self.selected_variable.set(columns[0])
+                    # Clear the no-data label
+                    self.no_data_label.config(text="", foreground="green")
                     self.log_output(f"✅ Loaded {len(columns)} variables for visualization", "INFO")
                 else:
+                    # No suitable variables found — keep combobox disabled but show clear message
+                    self.variable_selection.config(state='disabled', values=[])
+                    self.selected_variable.set('')  # ensure no text
+                    self.no_data_label.config(text="No suitable variables found for visualization", foreground="red")
                     self.log_output("❓ No suitable variables found for visualization", "WARNING")
             else:
-                # Show message if no data loaded
-                self.no_data_label.config(text="No variables available. Submit data to ODK Central first.")
+                # No data loaded — disable combobox and instruct the user
+                self.variable_selection.config(state='disabled', values=[])
+                # Show friendly text in the label; keep combobox text clear
+                self.selected_variable.set('') 
+                self.no_data_label.config(text="No variables available. Submit data to ODK Central first.", foreground="red")
                 self.log_output("❗ Load data first to populate variables", "WARNING")
-                self.variable_selection['values'] = []
         except Exception as e:
+            # Always catch exceptions and keep the UI usable
+            self.variable_selection.config(state='disabled', values=[])
+            self.selected_variable.set('')
+            self.no_data_label.config(text="Error loading variables", foreground="red")
             self.log_output(f"❌ Error loading variables: {str(e)}", "ERROR")
 
+# Keep reload_data as a thin wrapper (if present):
     def reload_data(self):
+        # This method can be extended later (e.g., to re-fetch from server) but for now it repopulates
         self.populate_variable_dropdown()
 
     def add_chart_to_report(self):
