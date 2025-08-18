@@ -728,6 +728,7 @@ class ODKCentralClient:
         self.session = requests.Session()
         self.token = None
         
+        
     def authenticate(self) -> bool:
         try:
             auth_url = urljoin(self.base_url, '/v1/sessions')
@@ -2608,29 +2609,43 @@ class FixedODKDashboardGUI:
         # Label for chart preview
         self.preview_label = ttk.Label(self.chart_preview_frame, text="Chart preview will appear here")
         self.preview_label.pack(pady=20)
+        # ... after self.variable_selection grid code ...
+        self.no_data_label = ttk.Label(var_select_frame, text="", foreground="red", font=("Helvetica", 10))
+        self.no_data_label.grid(row=0, column=2, sticky=tk.W, padx=(10,0))
+
+        reload_btn = ttk.Button(var_select_frame, text="Reload Data", command=self.populate_variable_dropdown)
+        reload_btn.grid(row=0, column=3, padx=(10,0))
+        reload_btn.config(style='Accent.TButton')
+        self.style.configure('Accent.TButton',
+                              borderwidth=1,
+                              relief="flat",
+                              background="#4CAF50",
+                              foreground="white",
+                              font=("Helvetica", 10, "bold"))
 
     def populate_variable_dropdown(self):
-        """Populate the variable dropdown with column names from the loaded data."""
         try:
             if hasattr(self, 'analytics') and hasattr(self.analytics, 'data') and not self.analytics.data.empty:
-                # Get column names, exclude system columns
                 columns = [col for col in self.analytics.data.columns 
                         if not col.startswith('_') and col.lower() not in 
                         ['submissiondate', 'instanceid', 'deviceid', 'submission_date']]
-                
-                # Update the dropdown with columns
                 self.variable_selection['values'] = columns
-                
+                self.no_data_label.config(text="")
                 if columns:
                     self.variable_selection.current(0)
                     self.log_output(f"✅ Loaded {len(columns)} variables for visualization", "INFO")
                 else:
                     self.log_output("❓ No suitable variables found for visualization", "WARNING")
             else:
+                # Show message if no data loaded
+                self.no_data_label.config(text="No variables available. Submit data to ODK Central first.")
                 self.log_output("❗ Load data first to populate variables", "WARNING")
                 self.variable_selection['values'] = []
         except Exception as e:
             self.log_output(f"❌ Error loading variables: {str(e)}", "ERROR")
+
+    def reload_data(self):
+        self.populate_variable_dropdown()
 
     def add_chart_to_report(self):
         """Create a chart based on selected variable and chart type and add to report."""
@@ -3765,7 +3780,6 @@ def cli_mode():
         print(f"📄 Generating PDF report: {output_path}")
         print("   🔧 Using temporary file handling")
         reporter = FixedHighQualityDashboardPDFReporter(analytics, header_image)
-        
         if reporter.generate_dashboard_report(str(output_path), args.title):
             print(f"🎉 Dashboard report generated successfully!")
             print(f"📍 File saved: {output_path.absolute()}")
