@@ -32,6 +32,7 @@ try:
     import matplotlib.dates as mdates
     import seaborn as sns
     import numpy as np
+    import pandas as pd
     
     # Set style
     plt.style.use('default')
@@ -2794,9 +2795,34 @@ class FixedODKDashboardGUI:
                 widget.destroy()
             ttk.Label(self.chart_preview_frame, text=f"Error creating chart: {str(e)}").pack(pady=20)
             logging.error(f"Error creating chart preview: {e}")
+##############################################################
+    def load_choices_from_xlsform(xls_path):
+        # assumes 'choices' sheet has columns: list_name, name, label
+        choices_df = pd.read_excel(xls_path, sheet_name='choices')
+        choices_map = {}
+        for list_name in choices_df['list_name'].unique():
+            sub = choices_df[choices_df['list_name'] == list_name]
+            choices_map[list_name] = {str(row['name']): str(row['label']) for _, row in sub.iterrows()}
+        return choices_map
+        self.analytics.form_info['choices'] = choices_map
+    ##############################################################
+    def _get_value_labels(self, variable):
+        if hasattr(self.analytics, 'form_info') and 'choices' in self.analytics.form_info:
+            return self.analytics.form_info['choices'].get(variable)
+        return None
 
     def _create_horizontal_bar_chart(self, ax, data, variable):
-        """Create horizontal bar chart."""
+        value_labels = self._get_value_labels(variable)
+        column = data[variable]
+        if value_labels:
+            mapped = column.map(lambda v: value_labels.get(str(v), str(v)))
+        else:
+            mapped = column
+        value_counts = mapped.value_counts().sort_values()
+        value_counts.plot.barh(ax=ax, color='skyblue')
+        ax.set_xlabel("Count")
+        ax.set_ylabel(variable)
+
         # Count values for categorical data or bin for numeric
         if data[variable].dtype.kind in 'ifc':  # integer, float, complex
             # Numeric data: create histogram
@@ -2808,7 +2834,6 @@ class FixedODKDashboardGUI:
             ax.set_yticklabels(bin_labels)
         else:
             # Categorical data: value counts
-            value_counts = data[variable].value_counts().sort_values()
             # Limit to top 15 categories if too many
             if len(value_counts) > 15:
                 value_counts = value_counts.tail(15)
@@ -2817,6 +2842,11 @@ class FixedODKDashboardGUI:
         
         ax.set_xlabel("Count")
         ax.set_ylabel(variable)
+
+
+        #####################################################
+
+        ####################################################
 
     def _create_vertical_bar_chart(self, ax, data, variable):
         """Create vertical bar chart."""
@@ -3179,9 +3209,7 @@ class FixedODKDashboardGUI:
                     else:
                         self.log_output("⚠️ Warning: Header image invalid, proceeding without it", "WARNING")
                         header_image = None
-                #########################################
-                self.populate_variable_dropdown()
-                #########################################
+
                 # Create client and authenticate
                 client = ODKCentralClient(
                     base_url=self.base_url.get(),
@@ -3220,9 +3248,21 @@ class FixedODKDashboardGUI:
                 forms = client.get_forms()
                 form_info = next((f for f in forms if f.get('xmlFormId') == form_id), {})
                 
-                # Create analytics
+                # Create analytics and assign to self so the UI can read it
                 self.log_output("📊 Analyzing data...")
                 analytics = DashboardAnalytics(data, form_info)
+                self.analytics = analytics
+
+                # Populate the variable dropdown on the main/UI thread
+                if hasattr(self, 'root') and getattr(self, 'root') is not None:
+                    try:
+                        self.root.after(0, self.populate_variable_dropdown)
+                    except Exception:
+                        # Fallback - call directly (might be okay if already on main thread)
+                        self.populate_variable_dropdown()
+                else:
+                    # If no root available (unlikely), call directly
+                    self.populate_variable_dropdown()
                 
                 # Generate output path
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3334,9 +3374,19 @@ class FixedODKDashboardGUI:
                 forms = client.get_forms()
                 form_info = next((f for f in forms if f.get('xmlFormId') == form_id), {})
                 
-                # Create analytics
+                # Create analytics and store on self for UI access
                 self.log_output("📊 Analyzing data...")
                 analytics = DashboardAnalytics(data, form_info)
+                self.analytics = analytics
+
+                # Populate the variable dropdown on the main/UI thread
+                if hasattr(self, 'root') and getattr(self, 'root') is not None:
+                    try:
+                        self.root.after(0, self.populate_variable_dropdown)
+                    except Exception:
+                        self.populate_variable_dropdown()
+                else:
+                    self.populate_variable_dropdown()
                 
                 # Generate output path
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
