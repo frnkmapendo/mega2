@@ -1,0 +1,29 @@
+# Example ODK Central configuration
+odk:
+  base_url: https://your-odk-central-server.com
+  email: your-email@example.com
+  # password: your-password  # Not recommended to store password in config
+  project_id: "1"
+  form_id: household_survey
+
+# Example report configuration
+report:
+  title: "Household Survey Data Report"
+  include_summary: true
+  include_charts: true
+  include_data_table: true
+  max_table_rows: 25
+  page_size: A4
+  chart_configs:
+    - type: bar
+      x_col: household_size
+      title: "Distribution of Household Sizes"
+    - type: pie
+      x_col: income_level
+      title: "Income Level Distribution"
+    - type: histogram
+      x_col: age_head_household
+      title: "Age of Household Head Distribution"
+    - type: bar
+      x_col: education_level
+      title: "Education Level Distribution"
