@@ -171,8 +171,6 @@ class ODKCentralAPI:
 
 # ===== Enhanced UI Definition with Separate Donut Chart Cards =====
 app_ui = ui.page_bootstrap(
-    #title="MEGA 2.0 Dashboard",
-    theme="flatly",
     ui.tags.head(
        # IMPORTANT: Added jQuery and Bootstrap libraries explicitly
         ui.tags.script(src="https://code.jquery.com/jquery-3.6.0.min.js"),
@@ -908,7 +906,8 @@ app_ui = ui.page_bootstrap(
     ui.div(
         {"class": "version-info"},
         f"Version 2.1.0 | Last update: 2025-06-23 11:40:14 | User: frnkmapendo"
-    )
+    ),
+    theme="flatly"
 )
 
 def server(input, output, session: Session):
@@ -1144,9 +1143,9 @@ def server(input, output, session: Session):
         finally:
             is_loading_data.set(False)
 
-      @reactive.Effect
-      @reactive.event(input.restoreTokenFromJS)
-      async def restore_token_from_js():
+    @reactive.Effect
+    @reactive.event(input.restoreTokenFromJS)
+    async def restore_token_from_js():
               # Skip if no credentials data
               if not input.restoreTokenFromJS():
                   return
@@ -1180,47 +1179,47 @@ def server(input, output, session: Session):
                       hide_loading()
                       return
                   
-              # Token is valid, complete login process
-              logged_in_value.set(True)
-              odk_token_value.set(token)
-              odk_email_value.set("Session Restored")
-              login_message_value.set("")
-              
-              # Setup initial data
-              project_choices = {str(p['id']): p['name'] for p in projects}
-              project_choices_value.set(project_choices)
-              
-              project_id = list(project_choices.keys())[0] if project_choices else None
-              selected_project_id_value.set(project_id)
-              
-              forms = odk_api.fetch_forms(project_id) if project_id else []
-              form_choices = {f['xmlFormId']: f['name'] for f in forms}
-              form_choices_value.set(form_choices)
-              
-              form_id = list(form_choices.keys())[0] if form_choices else None
-              selected_form_id_value.set(form_id)
-              
-              odk_api.project_id = project_id
-              odk_api.form_id = form_id
-              
-              # Load data using the centralized function
-              data, message = load_data_from_api(project_id, form_id)
-              odk_data_value.set(data)
-              data_message_value.set(message)
-              
-              log_audit_event("Token restore/login", "Session Restored")
-              
-              logging.info(f"Successfully restored session with token")
-          except Exception as e:
-              logged_in_value.set(False)
-              odk_token_value.set(None)
-              logging.error(f"Token restore failed: {e}")
-              login_message_value.set("Session restoration failed.")
-              session.send_custom_message("clearToken", {})
+                  # Token is valid, complete login process
+                  logged_in_value.set(True)
+                  odk_token_value.set(token)
+                  odk_email_value.set("Session Restored")
+                  login_message_value.set("")
+                  
+                  # Setup initial data
+                  project_choices = {str(p['id']): p['name'] for p in projects}
+                  project_choices_value.set(project_choices)
+                  
+                  project_id = list(project_choices.keys())[0] if project_choices else None
+                  selected_project_id_value.set(project_id)
+                  
+                  forms = odk_api.fetch_forms(project_id) if project_id else []
+                  form_choices = {f['xmlFormId']: f['name'] for f in forms}
+                  form_choices_value.set(form_choices)
+                  
+                  form_id = list(form_choices.keys())[0] if form_choices else None
+                  selected_form_id_value.set(form_id)
+                  
+                  odk_api.project_id = project_id
+                  odk_api.form_id = form_id
+                  
+                  # Load data using the centralized function
+                  data, message = load_data_from_api(project_id, form_id)
+                  odk_data_value.set(data)
+                  data_message_value.set(message)
+                  
+                  log_audit_event("Token restore/login", "Session Restored")
+                  
+                  logging.info(f"Successfully restored session with token")
+              except Exception as e:
+                  logged_in_value.set(False)
+                  odk_token_value.set(None)
+                  logging.error(f"Token restore failed: {e}")
+                  login_message_value.set("Session restoration failed.")
+                  session.send_custom_message("clearToken", {})
   
-      @output
-      @render.ui
-      def main_ui():
+    @output
+    @render.ui
+    def main_ui():
           data = odk_data_value.get()
           column_selector = None
           row_selector = None
@@ -1274,7 +1273,7 @@ def server(input, output, session: Session):
                                           "Sign In"
                                       )
                                   ),
-                                  ui.div(login_message_value.get(), {"class": "error-message"}) if login_message_value.get() else ""
+                                  ui.div({"class": "error-message"}, login_message_value.get()) if login_message_value.get() else ""
                               )
                           )
                       )
@@ -1710,9 +1709,9 @@ def server(input, output, session: Session):
               )
       
       # Output for GPS information box overlay on map
-      @output
-      @render.ui
-      def gps_info_box():
+    @output
+    @render.ui
+    def gps_info_box():
           gps_columns = gps_columns_value.get()
           paired_coords = paired_coordinates_value.get()
           
@@ -1747,9 +1746,9 @@ def server(input, output, session: Session):
           )
       
       # Download function
-      @output
-      @render.download(filename="Botnar_Adolescent_2.csv")
-      def download_data():
+    @output
+    @render.download(filename="Botnar_Adolescent_2.csv")
+    def download_data():
           df = filtered_df()
           selected = selected_columns()
           from io import StringIO
@@ -1762,9 +1761,9 @@ def server(input, output, session: Session):
               buffer.write("No data loaded\n")
           yield buffer.getvalue().encode("utf-8")
   
-      @reactive.Effect
-      @reactive.event(input.login)
-      def handle_login():
+    @reactive.Effect
+    @reactive.event(input.login)
+    async def handle_login():
           email = input.odk_email()
           password = input.odk_pass()
           if not email or not password:
@@ -1773,29 +1772,6 @@ def server(input, output, session: Session):
             
           show_loading("Authenticating...")
           is_loading_data.set(True)
-          try:
-              # Show progress bar during login
-              with ui.Progress(min=1, max=10) as p:
-                  p.set(message="Authenticating...", detail="Connecting to server...")
-                  
-                  # Set credentials
-                  odk_api.set_credentials(email, password)
-                  
-                  # Progress step 1-3: Authentication
-                  for i in range(1, 4):
-                      p.set(i, message="Authenticating", detail="Verifying credentials...")
-                      await asyncio.sleep(0.2)
-                      
-                  # Authenticate
-                  if not odk_api.authenticate():
-                      login_message_value.set("ODK Central authentication failed")
-                      return
-                      
-                  # Progress step 4-6: Loading projects
-                  for i in range(4, 7):
-                      p.set(i, message="Loading", detail="Retrieving projects...")
-                      await asyncio.sleep(0.2)
-              
           try:
               odk_api.set_credentials(email, password)
               if odk_api.authenticate():
@@ -1853,9 +1829,9 @@ def server(input, output, session: Session):
               hide_loading()
   
   
-      @reactive.Effect
-      @reactive.event(input.logout)
-      def handle_logout():
+    @reactive.Effect
+    @reactive.event(input.logout)
+    def handle_logout():
           log_audit_event("Logout", odk_email_value.get())
           logged_in_value.set(False)
           odk_email_value.set("")
@@ -1872,10 +1848,10 @@ def server(input, output, session: Session):
           odk_api.clear_credentials()
           session.send_custom_message("clearToken", {})
   
-      @reactive.Effect
-      @debounce(1000)
-      @reactive.event(input.load_data)
-      def load_odk_data():
+    @reactive.Effect
+    @debounce(1000)
+    @reactive.event(input.load_data)
+    async def load_odk_data():
           project_id = selected_project_id_value.get()
           form_id = selected_form_id_value.get()
           
@@ -1915,9 +1891,9 @@ def server(input, output, session: Session):
               hide_loading()
               
       # Force refresh - bypass cache
-      @reactive.Effect
-      @reactive.event(input.force_refresh)
-      async def force_reload_odk_data():
+    @reactive.Effect
+    @reactive.event(input.force_refresh)
+    async def force_reload_odk_data():
           project_id = selected_project_id_value.get()
           form_id = selected_form_id_value.get()
           
@@ -1956,9 +1932,9 @@ def server(input, output, session: Session):
               is_loading_data.set(False)
               hide_loading()
   
-      @reactive.Effect
-      @reactive.event(input.selected_project)
-      def project_selection_effect():
+    @reactive.Effect
+    @reactive.event(input.selected_project)
+    async def project_selection_effect():
           project_id = input.selected_project()
           if not project_id:
               return
@@ -1998,9 +1974,9 @@ def server(input, output, session: Session):
               is_loading_data.set(False)
               hide_loading()
   
-      @reactive.Effect
-      @reactive.event(input.selected_form)
-      def form_selection_effect():
+    @reactive.Effect
+    @reactive.event(input.selected_form)
+    def form_selection_effect():
           form_id = input.selected_form()
           project_id = selected_project_id_value.get()
           if not form_id or not project_id:
@@ -2029,13 +2005,13 @@ def server(input, output, session: Session):
               is_loading_data.set(False)
               hide_loading()
   
-      @output
-      @render.text
-      def data_message():
+    @output
+    @render.text
+    def data_message():
           return data_message_value.get()
   
-      @reactive.Calc(memoize=True)
-      def filtered_df():
+    @reactive.Calc(memoize=True)
+    def filtered_df():
           df = odk_data_value.get()
           if df is None or df.empty:
               return pd.DataFrame()
@@ -2048,8 +2024,8 @@ def server(input, output, session: Session):
                   
           return df
   
-      @reactive.Calc
-      def selected_columns():
+    @reactive.Calc
+    def selected_columns():
           """Get selected columns from individual checkboxes"""
           df = odk_data_value.get()
           if df is None or df.empty:
@@ -2072,29 +2048,29 @@ def server(input, output, session: Session):
                   
               return selected
             
-            except Exception as e:
-                logging.error(f"Error in selected_columns: {str(e)}")
-                return list(df.columns)[:min(len(df.columns),6)]
+          except Exception as e:
+              logging.error(f"Error in selected_columns: {str(e)}")
+              return list(df.columns)[:min(len(df.columns),6)]
   
       # New effect to update the button text
-      @reactive.Effect
-      def update_column_button_text():
+    @reactive.Effect
+    def update_column_button_text():
           selected = selected_columns()
           if selected:
               count = len(selected)
               session.send_custom_message("updateColumnButtonText", {"count": count})
   
-      @reactive.Calc
-      def n_rows():
+    @reactive.Calc
+    def n_rows():
           try:
               value = input.n_rows()
               return int(value) if value is not None else 5
           except Exception:
               return 5
   
-      @output
-      @render.data_frame
-      def submission_table():
+    @output
+    @render.data_frame
+    def submission_table():
           df = filtered_df()
           cols = selected_columns()
           rows = n_rows()
@@ -2108,9 +2084,9 @@ def server(input, output, session: Session):
           return df.head(rows)  # Fallback to all columns
   
       # Keep the table function for backward compatibility
-      @output
-      @render.data_frame
-      def school_count_table():
+    @output
+    @render.data_frame
+    def school_count_table():
           df = filtered_df()
           if df is not None and not df.empty and "school" in df.columns:
               school_counts = df["school"].value_counts().reset_index()
@@ -2120,9 +2096,9 @@ def server(input, output, session: Session):
               return pd.DataFrame({"Message": ["No data loaded or no school column"]})
       
       # Updated horizontal bar chart for schools to fit in card
-      @output
-      @render_widget
-      def school_count_chart():
+    @output
+    @render_widget
+    def school_count_chart():
           import plotly.express as px
           import plotly.graph_objects as go
           
@@ -2202,9 +2178,9 @@ def server(input, output, session: Session):
               return fig
       
       # Updated bar chart for age groups with percentages to fit in card
-      @output
-      @render_widget
-      def age_group_chart():
+    @output
+    @render_widget
+    def age_group_chart():
           import plotly.express as px
           import plotly.graph_objects as go
           
@@ -2287,9 +2263,9 @@ def server(input, output, session: Session):
               return fig
   
       # Enhanced donut charts with statistics - Fixed for Sample Distribution
-      @output
-      @render_widget
-      def sd02_donut_chart():
+    @output
+    @render_widget
+    def sd02_donut_chart():
           import plotly.express as px
           import plotly.graph_objects as go
           
@@ -2340,9 +2316,9 @@ def server(input, output, session: Session):
               return fig
   
       # Enhanced donut charts with statistics - Fixed for Sex Distribution
-      @output
-      @render_widget
-      def a04_donut_chart():
+    @output
+    @render_widget
+    def a04_donut_chart():
           import plotly.express as px
           import plotly.graph_objects as go
           
@@ -2393,9 +2369,9 @@ def server(input, output, session: Session):
               return fig
   
       # Updated Map visualization function using ipyleaflet with GPS columns from form
-      @output
-      @render_widget
-      def location_map():
+    @output
+    @render_widget
+    def location_map():
           from ipyleaflet import Map, Marker, MarkerCluster, Popup, basemaps, CircleMarker, Icon, AwesomeIcon
           
           df = filtered_df()
@@ -2675,9 +2651,9 @@ def server(input, output, session: Session):
           return m
   
       # Additional statistics for sample distribution
-      @output
-      @render.ui
-      def sample_stats():
+    @output
+    @render.ui
+    def sample_stats():
           df = filtered_df()
           if df is not None and not df.empty and "sample" in df.columns:
               value_counts = df["sample"].value_counts()
@@ -2688,26 +2664,26 @@ def server(input, output, session: Session):
                   {"class": "chart-stats"},
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(total), {"class": "stat-value"}),
-                      ui.div("Total", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(total)),
+                      ui.div({"class": "stat-label"}, "Total")
                   ),
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(len(value_counts)), {"class": "stat-value"}),
-                      ui.div("Categories", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(len(value_counts))),
+                      ui.div({"class": "stat-label"}, "Categories")
                   ),
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(most_common, {"class": "stat-value"}),
-                      ui.div("Most Common", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, most_common),
+                      ui.div({"class": "stat-label"}, "Most Common")
                   )
               )
           return ui.div()
   
       # Additional statistics for sex distribution
-      @output
-      @render.ui
-      def sex_stats():
+    @output
+    @render.ui
+    def sex_stats():
           df = filtered_df()
           if df is not None and not df.empty and "A04" in df.columns:
               value_counts = df["A04"].value_counts()
@@ -2720,25 +2696,25 @@ def server(input, output, session: Session):
                   {"class": "chart-stats"},
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(total), {"class": "stat-value"}),
-                      ui.div("Total", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(total)),
+                      ui.div({"class": "stat-label"}, "Total")
                   ),
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(male_count), {"class": "stat-value"}),
-                      ui.div("Male", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(male_count)),
+                      ui.div({"class": "stat-label"}, "Male")
                   ),
                   ui.div(
                       {"class": "stat-item"},
-                      ui.div(str(female_count), {"class": "stat-value"}),
-                      ui.div("Female", {"class": "stat-label"})
+                      ui.div({"class": "stat-value"}, str(female_count)),
+                      ui.div({"class": "stat-label"}, "Female")
                   )
               )
           return ui.div()
   
-      @output
-      @render.text
-      def selected_columns_count():
+    @output
+    @render.text
+    def selected_columns_count():
           df = odk_data_value.get()
           if df is None or df.empty:
               return ""
