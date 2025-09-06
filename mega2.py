@@ -16,14 +16,56 @@ from ipyleaflet import Map, Marker, MarkerCluster, Popup, basemaps, CircleMarker
 # ===== Configure Logging =====
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler('mega2.log'),
+        logging.StreamHandler()
+    ]
 )
 
 def log_audit_event(action, user, details=None):
     logging.info(f"[AUDIT] {action} by {user} at {datetime.utcnow().isoformat()} | Details: {details}")
     # Add timestamp to log
-    with open("audit_log.txt", "a") as f:
-        f.write(f"{datetime.utcnow().isoformat()} - {action} by {user} | {details}\n")
+    try:
+        with open("audit_log.txt", "a") as f:
+            f.write(f"{datetime.utcnow().isoformat()} - {action} by {user} | {details}\n")
+    except Exception as e:
+        logging.error(f"Could not write to audit log: {e}")
+
+class AppErrorHandler:
+    """Enhanced error handling for Shiny app with user-friendly messages"""
+    
+    @staticmethod
+    def handle_api_error(error, context="API operation"):
+        """Handle API-related errors with appropriate user feedback"""
+        error_str = str(error).lower()
+        
+        if "connection" in error_str or "timeout" in error_str:
+            return f"Connection problem during {context}. Please check your internet connection."
+        elif "401" in error_str or "authentication" in error_str:
+            return f"Authentication failed. Please check your ODK Central credentials."
+        elif "403" in error_str or "forbidden" in error_str:
+            return f"Access denied. Please check your permissions for this project/form."
+        elif "404" in error_str or "not found" in error_str:
+            return f"Resource not found. Please verify your project and form IDs."
+        elif "500" in error_str or "server error" in error_str:
+            return f"ODK Central server error. Please try again later."
+        else:
+            return f"Error during {context}: {str(error)[:100]}{'...' if len(str(error)) > 100 else ''}"
+    
+    @staticmethod
+    def handle_data_error(error, context="data processing"):
+        """Handle data processing errors"""
+        error_str = str(error).lower()
+        
+        if "memory" in error_str:
+            return f"Memory error during {context}. The dataset may be too large."
+        elif "empty" in error_str:
+            return f"No data available for {context}. Please check your form has submissions."
+        elif "column" in error_str or "key" in error_str:
+            return f"Data structure error during {context}. The form structure may have changed."
+        else:
+            return f"Data processing error: {str(error)[:100]}{'...' if len(str(error)) > 100 else ''}"
 
 # ===== ODK Central API Integration =====
 class ODKCentralAPI:
@@ -69,8 +111,34 @@ class ODKCentralAPI:
             self.token = response.json().get("token")
             logging.info("Authentication successful for user: %s", self.email)
             return True
+        except requests.exceptions.Timeout:
+            error_msg = "Request timed out. The server took too long to respond."
+            logging.error(f"ODK Authentication timeout: {self.base_url}")
+            self.token = None
+            return False
+        except requests.exceptions.ConnectionError:
+            error_msg = "Cannot connect to ODK Central server. Please check the URL and your internet connection."
+            logging.error(f"ODK Authentication connection error: {self.base_url}")
+            self.token = None
+            return False
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                error_msg = "Invalid email or password."
+            elif e.response.status_code == 403:
+                error_msg = "Access forbidden. Please check your account permissions."
+            else:
+                error_msg = f"HTTP error {e.response.status_code}: {e.response.reason}"
+            logging.error(f"ODK Authentication HTTP error: {error_msg}")
+            self.token = None
+            return False
         except requests.exceptions.RequestException as e:
-            logging.error(f"ODK Authentication failed: {e}")
+            error_msg = AppErrorHandler.handle_api_error(e, "authentication")
+            logging.error(f"ODK Authentication failed: {error_msg}")
+            self.token = None
+            return False
+        except Exception as e:
+            error_msg = f"Unexpected authentication error: {str(e)}"
+            logging.error(f"ODK Authentication unexpected error: {error_msg}")
             self.token = None
             return False
 
@@ -94,8 +162,23 @@ class ODKCentralAPI:
             self._projects_cache[cache_key] = projects
             self._cache_expiry[cache_key] = time.time() + self._cache_lifetime
             return response.json()
+        except requests.exceptions.Timeout:
+            logging.error("Timeout fetching projects from ODK Central")
+            return []
+        except requests.exceptions.ConnectionError:
+            logging.error("Connection error fetching projects from ODK Central")
+            return []
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                logging.error("Authentication expired while fetching projects")
+            elif e.response.status_code == 403:
+                logging.error("Access forbidden while fetching projects")
+            else:
+                logging.error(f"HTTP error {e.response.status_code} fetching projects")
+            return []
         except Exception as e:
-            logging.error(f"Failed to fetch projects: {e}")
+            error_msg = AppErrorHandler.handle_api_error(e, "fetching projects")
+            logging.error(f"Failed to fetch projects: {error_msg}")
             return []
 
     def fetch_forms(self, project_id):
@@ -119,8 +202,21 @@ class ODKCentralAPI:
             self._cache_expiry[cache_key] = time.time() + self._cache_lifetime
             
             return response.json()
+        except requests.exceptions.Timeout:
+            logging.error(f"Timeout fetching forms for project {project_id}")
+            return []
+        except requests.exceptions.ConnectionError:
+            logging.error(f"Connection error fetching forms for project {project_id}")
+            return []
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                logging.error(f"Project {project_id} not found")
+            else:
+                logging.error(f"HTTP error {e.response.status_code} fetching forms for project {project_id}")
+            return []
         except Exception as e:
-            logging.error(f"Failed to fetch forms: {e}")
+            error_msg = AppErrorHandler.handle_api_error(e, f"fetching forms for project {project_id}")
+            logging.error(f"Failed to fetch forms: {error_msg}")
             return []
 
     def fetch_submissions(self, project_id=None, form_id=None, force_refresh=True,):
@@ -140,23 +236,56 @@ class ODKCentralAPI:
         try:
             headers = {"Authorization": f"Bearer {self.token}"}
             url = f"{self.base_url}/v1/projects/{project_id}/forms/{form_id}/submissions.csv"
+            
             # Use streaming for better performance with large datasets
             with requests.get(url, headers=headers, timeout=60, stream=True) as response:
                 response.raise_for_status()
                 from io import StringIO
             
-               # Read in chunks to avoid memory issues
+                # Read in chunks to avoid memory issues
                 csv_data = StringIO()
+                chunk_count = 0
+                max_chunks = 1000  # Limit to prevent excessive memory usage
+                
                 for chunk in response.iter_content(chunk_size=8192, decode_unicode=True):
                     if chunk:
                         csv_data.write(chunk)
+                        chunk_count += 1
+                        
+                        # Memory protection: stop if dataset is too large
+                        if chunk_count > max_chunks:
+                            logging.warning(f"Large dataset detected for project {project_id}, form {form_id} - truncating")
+                            break
                 
                 csv_data.seek(0)
-                df = pd.read_csv(csv_data)
                 
-                # Cache the results
-                self._submissions_cache[cache_key] = df
-                self._cache_expiry[cache_key] = time.time() + self._cache_lifetime
+                # Try to read CSV with memory optimization
+                try:
+                    df = pd.read_csv(csv_data)
+                    
+                    # Memory optimization for large datasets
+                    if len(df) > 5000:
+                        logging.info(f"Large dataset ({len(df)} rows) - applying memory optimization")
+                        df = self._optimize_dataframe_memory(df)
+                        
+                    # Warn if dataset was truncated
+                    if chunk_count > max_chunks:
+                        error_df = pd.DataFrame({
+                            "Warning": [f"Dataset truncated at {max_chunks} chunks due to memory limits. "
+                                      f"Consider filtering data on ODK Central."]
+                        })
+                        df = pd.concat([error_df, df], ignore_index=True)
+                        
+                except MemoryError:
+                    logging.error(f"Memory error reading submissions for project {project_id}, form {form_id}")
+                    return pd.DataFrame({"Error": ["Dataset too large for available memory. Please filter data on ODK Central."]})
+                
+                # Cache the results only if not too large
+                if len(df) < 10000:  # Only cache smaller datasets
+                    self._submissions_cache[cache_key] = df
+                    self._cache_expiry[cache_key] = time.time() + self._cache_lifetime
+                else:
+                    logging.info(f"Dataset too large ({len(df)} rows) for caching")
                 
             return df
         except requests.exceptions.Timeout:

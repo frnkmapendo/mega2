@@ -77,6 +77,87 @@ try:
 except ImportError:
     HAS_FOLIUM = False
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('odk_dashboard_reporter.log'),
+        logging.StreamHandler()
+    ]
+)
+
+class ReporterErrorHandler:
+    """Enhanced error handling for ODK Dashboard Reporter"""
+    
+    @staticmethod
+    def handle_error(error, context="operation", show_user=True):
+        """Centralized error handling with logging and user feedback"""
+        error_msg = str(error)
+        
+        # Log the error with context
+        logging.error(f"{context}: {error_msg}")
+        
+        # Create user-friendly error message
+        user_msg = ReporterErrorHandler._get_user_friendly_message(error, context)
+        
+        if show_user:
+            try:
+                import tkinter.messagebox as messagebox
+                messagebox.showerror("Error", user_msg)
+            except:
+                print(f"ERROR: {user_msg}")  # Fallback for CLI mode
+        
+        return user_msg
+    
+    @staticmethod
+    def _get_user_friendly_message(error, context):
+        """Convert technical errors to user-friendly messages"""
+        error_str = str(error).lower()
+        
+        # File/IO errors
+        if "file" in error_str or "directory" in error_str or "permission" in error_str:
+            return f"File access error during {context}. Please check file permissions and path."
+        
+        # Network/connection errors
+        if "connection" in error_str or "timeout" in error_str or "network" in error_str:
+            return f"Network error during {context}. Please check your internet connection."
+        
+        # Memory errors
+        if "memory" in error_str or "size" in error_str:
+            return f"Memory error during {context}. Try reducing dataset size or closing other applications."
+        
+        # Image processing errors
+        if "image" in error_str or "pillow" in error_str or "jpeg" in error_str or "png" in error_str:
+            return f"Image processing error during {context}. Please check image format and size."
+        
+        # PDF generation errors
+        if "pdf" in error_str or "reportlab" in error_str:
+            return f"PDF generation error during {context}. Please check output directory permissions."
+        
+        # Default message
+        return f"Error during {context}: {str(error)[:100]}{'...' if len(str(error)) > 100 else ''}"
+    
+    @staticmethod
+    def show_warning(message, title="Warning"):
+        """Show warning message"""
+        logging.warning(f"{title}: {message}")
+        try:
+            import tkinter.messagebox as messagebox
+            messagebox.showwarning(title, message)
+        except:
+            print(f"WARNING: {message}")
+    
+    @staticmethod
+    def show_info(message, title="Information"):
+        """Show info message"""
+        logging.info(f"{title}: {message}")
+        try:
+            import tkinter.messagebox as messagebox
+            messagebox.showinfo(title, message)
+        except:
+            print(f"INFO: {message}")
+
 # Updated constants with current values
 CURRENT_USER = os.getlogin()
 CURRENT_DATETIME = "2025-08-15 07:33:14"  # Using the provided date/time
@@ -85,20 +166,36 @@ CURRENT_DATETIME = "2025-08-15 07:33:14"  # Using the provided date/time
 _temp_files_to_cleanup = []
 
 def cleanup_temp_files():
-    """Clean up temporary files on exit."""
+    """Clean up temporary files on exit with enhanced error handling."""
     global _temp_files_to_cleanup
+    if not _temp_files_to_cleanup:
+        return
+        
+    cleaned_count = 0
+    failed_count = 0
+    
     for temp_path in _temp_files_to_cleanup:
         try:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+                cleaned_count += 1
+                
                 # Try to remove parent directory if it's empty
                 parent_dir = os.path.dirname(temp_path)
                 try:
-                    os.rmdir(parent_dir)
+                    if os.path.exists(parent_dir) and not os.listdir(parent_dir):
+                        os.rmdir(parent_dir)
                 except (OSError, FileNotFoundError):
                     pass  # Directory not empty or already removed
         except Exception as e:
+            failed_count += 1
             logging.warning(f"Could not clean up temp file {temp_path}: {e}")
+    
+    if cleaned_count > 0:
+        logging.info(f"Cleaned up {cleaned_count} temporary files")
+    if failed_count > 0:
+        logging.warning(f"Failed to clean up {failed_count} temporary files")
+        
     _temp_files_to_cleanup.clear()
 
 # Register cleanup function
@@ -126,19 +223,41 @@ class HighQualityImageProcessor:
     @staticmethod
     def validate_image(image_path: str) -> bool:
         """Validate if image file is valid and supported with preference for PNG/JPG."""
+        if not image_path:
+            return False
+            
         if not os.path.exists(image_path):
+            ReporterErrorHandler.show_warning(f"Image file not found: {image_path}")
             return False
         
         try:
             file_ext = Path(image_path).suffix.lower()
             if file_ext not in HighQualityImageProcessor.SUPPORTED_FORMATS:
+                ReporterErrorHandler.show_warning(
+                    f"Unsupported image format: {file_ext}. Supported formats: {', '.join(HighQualityImageProcessor.SUPPORTED_FORMATS.keys())}")
+                return False
+            
+            # Check file size (limit to 50MB for safety)
+            file_size = os.path.getsize(image_path)
+            if file_size > 50 * 1024 * 1024:  # 50MB
+                ReporterErrorHandler.show_warning(f"Image file too large: {file_size / (1024*1024):.1f}MB. Maximum size: 50MB")
                 return False
             
             with PILImage.open(image_path) as img:
                 # Verify image integrity
                 img.verify()
+                
+                # Check image dimensions (reasonable limits)
+                with PILImage.open(image_path) as img_check:  # Reopen after verify
+                    width, height = img_check.size
+                    if width > 10000 or height > 10000:
+                        ReporterErrorHandler.show_warning(f"Image dimensions too large: {width}x{height}. Maximum: 10000x10000")
+                        return False
+                
                 return True
-        except Exception:
+                
+        except Exception as e:
+            ReporterErrorHandler.handle_error(e, f"validating image {image_path}", show_user=False)
             return False
     
     @staticmethod
@@ -732,6 +851,10 @@ class ODKCentralClient:
         
     def authenticate(self) -> bool:
         try:
+            if not self.username or not self.password:
+                ReporterErrorHandler.show_warning("Username and password are required for authentication")
+                return False
+                
             auth_url = urljoin(self.base_url, '/v1/sessions')
             response = self.session.post(
                 auth_url,
@@ -741,14 +864,34 @@ class ODKCentralClient:
             response.raise_for_status()
             
             self.token = response.json().get('token')
+            if not self.token:
+                ReporterErrorHandler.show_warning("No authentication token received from server")
+                return False
+                
             self.session.headers.update({
                 'Authorization': f'Bearer {self.token}',
                 'Content-Type': 'application/json'
             })
             
+            logging.info("ODK Central authentication successful")
             return True
+            
+        except requests.exceptions.Timeout:
+            ReporterErrorHandler.handle_error("Authentication timeout", "ODK Central authentication")
+            return False
+        except requests.exceptions.ConnectionError:
+            ReporterErrorHandler.handle_error("Cannot connect to ODK Central server", "ODK Central authentication")
+            return False
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                ReporterErrorHandler.handle_error("Invalid username or password", "ODK Central authentication")
+            elif e.response.status_code == 403:
+                ReporterErrorHandler.handle_error("Access forbidden - check account permissions", "ODK Central authentication")
+            else:
+                ReporterErrorHandler.handle_error(f"HTTP {e.response.status_code}: {e.response.reason}", "ODK Central authentication")
+            return False
         except Exception as e:
-            logging.error(f"Authentication failed: {e}")
+            ReporterErrorHandler.handle_error(e, "ODK Central authentication")
             return False
     
     def get_projects(self) -> List[Dict[str, Any]]:
