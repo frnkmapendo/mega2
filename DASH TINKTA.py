@@ -21,13 +21,297 @@ import os
 import sys
 from ttkbootstrap.widgets import DateEntry
 from datetime import datetime, timedelta
+import logging
+
+# Try to import optional dependencies
+try:
+    from scipy import stats
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+    logging.warning("scipy not available - some statistical features will be disabled")
+
+try:
+    import matplotlib.dates as mdates
+    HAS_MATPLOTLIB_DATES = True
+except ImportError:
+    HAS_MATPLOTLIB_DATES = False
+
+# Configure logging for better error tracking
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('dashboard.log'),
+        logging.StreamHandler()
+    ]
+)
+
+class DateUtils:
+    """Enhanced date handling and validation utilities"""
+    
+    # Common date formats to try when parsing
+    DATE_FORMATS = [
+        '%Y-%m-%d',           # ISO format: 2023-12-31
+        '%Y-%m-%d %H:%M:%S',  # ISO datetime: 2023-12-31 23:59:59
+        '%Y-%m-%dT%H:%M:%S',  # ISO T format: 2023-12-31T23:59:59
+        '%Y-%m-%dT%H:%M:%SZ', # ISO Z format: 2023-12-31T23:59:59Z
+        '%d/%m/%Y',           # DD/MM/YYYY: 31/12/2023
+        '%m/%d/%Y',           # MM/DD/YYYY: 12/31/2023
+        '%d-%m-%Y',           # DD-MM-YYYY: 31-12-2023
+        '%m-%d-%Y',           # MM-DD-YYYY: 12-31-2023
+        '%d.%m.%Y',           # DD.MM.YYYY: 31.12.2023
+        '%Y%m%d',             # YYYYMMDD: 20231231
+        '%d %b %Y',           # DD Mon YYYY: 31 Dec 2023
+        '%d %B %Y',           # DD Month YYYY: 31 December 2023
+        '%b %d, %Y',          # Mon DD, YYYY: Dec 31, 2023
+        '%B %d, %Y',          # Month DD, YYYY: December 31, 2023
+    ]
+    
+    @staticmethod
+    def parse_date(date_string, default_format=None):
+        """
+        Parse date string with multiple format attempts
+        
+        Args:
+            date_string: String to parse
+            default_format: Preferred format to try first
+            
+        Returns:
+            datetime object or None if parsing fails
+        """
+        if not date_string or pd.isna(date_string):
+            return None
+            
+        date_string = str(date_string).strip()
+        
+        # Try default format first if provided
+        if default_format:
+            try:
+                return datetime.strptime(date_string, default_format)
+            except ValueError:
+                pass
+        
+        # Try common formats
+        for fmt in DateUtils.DATE_FORMATS:
+            try:
+                return datetime.strptime(date_string, fmt)
+            except ValueError:
+                continue
+        
+        # Try pandas parsing as last resort
+        try:
+            return pd.to_datetime(date_string, infer_datetime_format=True)
+        except:
+            return None
+    
+    @staticmethod
+    def validate_date_range(start_date, end_date):
+        """
+        Validate that date range is logical
+        
+        Returns:
+            tuple: (is_valid, error_message)
+        """
+        if start_date is None or end_date is None:
+            return True, ""  # Allow None values
+        
+        if start_date > end_date:
+            return False, "Start date must be before end date"
+        
+        # Check for reasonable date ranges (not too far in past/future)
+        now = datetime.now()
+        year_1900 = datetime(1900, 1, 1)
+        year_2100 = datetime(2100, 1, 1)
+        
+        if start_date < year_1900:
+            return False, "Start date is too far in the past (before 1900)"
+        
+        if end_date > year_2100:
+            return False, "End date is too far in the future (after 2100)"
+        
+        return True, ""
+    
+    @staticmethod
+    def format_date_for_display(date_obj, format_type='short'):
+        """
+        Format date for user-friendly display
+        
+        Args:
+            date_obj: datetime object
+            format_type: 'short', 'long', or 'iso'
+        """
+        if date_obj is None:
+            return "N/A"
+        
+        try:
+            if format_type == 'short':
+                return date_obj.strftime('%Y-%m-%d')
+            elif format_type == 'long':
+                return date_obj.strftime('%B %d, %Y')
+            elif format_type == 'iso':
+                return date_obj.isoformat()
+            else:
+                return str(date_obj)
+        except:
+            return str(date_obj)
+    
+    @staticmethod
+    def detect_date_columns(df):
+        """
+        Detect potential date columns in DataFrame
+        
+        Returns:
+            list: Column names that likely contain dates
+        """
+        date_columns = []
+        
+        # Keywords that suggest date columns
+        date_keywords = ['date', 'time', 'created', 'updated', 'submission', 
+                        'start', 'end', 'timestamp', 'when', 'day']
+        
+        for col in df.columns:
+            col_lower = col.lower()
+            
+            # Check if column name contains date keywords
+            if any(keyword in col_lower for keyword in date_keywords):
+                date_columns.append(col)
+                continue
+            
+            # Check if column values look like dates
+            if len(df) > 0:
+                sample_values = df[col].dropna().head(10)
+                date_like_count = 0
+                
+                for value in sample_values:
+                    if DateUtils.parse_date(value) is not None:
+                        date_like_count += 1
+                
+                # If more than 50% of sample values are date-like
+                if date_like_count > len(sample_values) * 0.5:
+                    date_columns.append(col)
+        
+        return date_columns
+    
+    @staticmethod
+    def convert_column_to_datetime(df, column_name):
+        """
+        Convert a DataFrame column to datetime with error handling
+        
+        Returns:
+            tuple: (success, error_message, converted_series)
+        """
+        try:
+            if column_name not in df.columns:
+                return False, f"Column '{column_name}' not found", None
+            
+            original_series = df[column_name].copy()
+            converted_series = pd.Series(index=original_series.index, dtype='datetime64[ns]')
+            
+            failed_conversions = []
+            
+            for idx, value in original_series.items():
+                parsed_date = DateUtils.parse_date(value)
+                if parsed_date is not None:
+                    converted_series.iloc[idx] = parsed_date
+                else:
+                    failed_conversions.append(str(value))
+            
+            success_rate = (len(original_series) - len(failed_conversions)) / len(original_series)
+            
+            if success_rate < 0.5:
+                return False, f"Could not parse {len(failed_conversions)} of {len(original_series)} values", None
+            
+            error_msg = ""
+            if failed_conversions:
+                error_msg = f"Warning: {len(failed_conversions)} values could not be parsed"
+            
+            return True, error_msg, converted_series
+            
+        except Exception as e:
+            return False, str(e), None
 
 CURRENT_USER = os.getlogin()
+
+class ErrorHandler:
+    """Enhanced error handling with user-friendly messages and logging"""
+    
+    @staticmethod
+    def handle_error(error, context="Operation", show_user=True, log_level=logging.ERROR):
+        """
+        Centralized error handling with logging and user feedback
+        
+        Args:
+            error: The exception or error message
+            context: Context where the error occurred
+            show_user: Whether to show messagebox to user
+            log_level: Logging level for the error
+        """
+        error_msg = str(error)
+        
+        # Log the error with context
+        logging.log(log_level, f"{context}: {error_msg}")
+        
+        # Create user-friendly error message
+        user_msg = ErrorHandler._get_user_friendly_message(error, context)
+        
+        if show_user:
+            messagebox.showerror("Error", user_msg)
+        
+        return user_msg
+    
+    @staticmethod
+    def _get_user_friendly_message(error, context):
+        """Convert technical errors to user-friendly messages"""
+        error_str = str(error).lower()
+        
+        # Connection errors
+        if "connection" in error_str or "timeout" in error_str:
+            return f"Connection problem during {context}. Please check your internet connection and try again."
+        
+        # Authentication errors
+        if "auth" in error_str or "credential" in error_str or "login" in error_str:
+            return f"Authentication failed during {context}. Please check your username and password."
+        
+        # Data processing errors
+        if "pandas" in error_str or "dataframe" in error_str:
+            return f"Data processing error during {context}. The data format may be incompatible."
+        
+        # File errors
+        if "file" in error_str or "directory" in error_str or "permission" in error_str:
+            return f"File access error during {context}. Please check file permissions and try again."
+        
+        # Memory errors
+        if "memory" in error_str or "size" in error_str:
+            return f"Memory error during {context}. The dataset may be too large. Try reducing the data size."
+        
+        # Default message
+        return f"An error occurred during {context}: {str(error)[:100]}{'...' if len(str(error)) > 100 else ''}"
+    
+    @staticmethod
+    def show_warning(message, title="Warning"):
+        """Show warning message to user"""
+        logging.warning(f"{title}: {message}")
+        messagebox.showwarning(title, message)
+    
+    @staticmethod
+    def show_info(message, title="Information"):
+        """Show info message to user"""
+        logging.info(f"{title}: {message}")
+        messagebox.showinfo(title, message)
+    
+    @staticmethod
+    def show_success(message, title="Success"):
+        """Show success message to user"""
+        logging.info(f"{title}: {message}")
+        messagebox.showinfo(title, message)
 class Dashboard:
     def __init__(self, root):
         self.root = root
         self.root.title("ODK Data Dashboard")
-        self.root.geometry("1600x1200")
+        
+        # Responsive window management
+        self.setup_responsive_window()
                 
         # Initialize all variables first
         self.initialize_variables()
@@ -38,6 +322,183 @@ class Dashboard:
 
         # Create status bar
         self.create_status_bar()
+        
+        # Setup window event handlers
+        self.setup_window_handlers()
+        
+    def setup_responsive_window(self):
+        """Setup responsive window with proper sizing and state management"""
+        # Get screen dimensions
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Calculate responsive window size (80% of screen, but with minimums)
+        min_width, min_height = 1000, 700
+        max_width, max_height = 1800, 1200
+        
+        window_width = max(min_width, min(int(screen_width * 0.8), max_width))
+        window_height = max(min_height, min(int(screen_height * 0.8), max_height))
+        
+        # Center window on screen
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        self.root.minsize(min_width, min_height)
+        
+        # Allow window to be resizable
+        self.root.resizable(True, True)
+        
+        # Save window state
+        self.window_state = {
+            'width': window_width,
+            'height': window_height,
+            'x': x,
+            'y': y,
+            'maximized': False
+        }
+        
+        logging.info(f"Window initialized: {window_width}x{window_height} on {screen_width}x{screen_height} screen")
+    
+    def setup_window_handlers(self):
+        """Setup window event handlers for responsive behavior"""
+        # Handle window resize
+        self.root.bind('<Configure>', self.on_window_configure)
+        
+        # Handle window state changes
+        self.root.bind('<KeyPress-F11>', self.toggle_fullscreen)
+        self.root.bind('<Control-plus>', self.increase_font_size)
+        self.root.bind('<Control-minus>', self.decrease_font_size)
+        self.root.bind('<Control-0>', self.reset_font_size)
+        
+        # Handle window close
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Initialize font scaling
+        self.font_scale = 1.0
+    
+    def on_window_configure(self, event):
+        """Handle window resize events"""
+        if event.widget == self.root:
+            # Update window state
+            self.window_state['width'] = self.root.winfo_width()
+            self.window_state['height'] = self.root.winfo_height()
+            
+            # Adjust UI elements based on window size
+            self.adjust_ui_for_size()
+    
+    def adjust_ui_for_size(self):
+        """Adjust UI elements based on current window size"""
+        width = self.window_state['width']
+        height = self.window_state['height']
+        
+        # Adjust chart frame size
+        if hasattr(self, 'chart_frame'):
+            if width < 1200:
+                # Smaller window: stack elements vertically
+                chart_height = max(300, height // 3)
+            else:
+                # Larger window: more space for charts
+                chart_height = max(400, height // 2)
+                
+        # Adjust table display
+        if hasattr(self, 'tree'):
+            if width < 1000:
+                # Hide some columns on smaller screens
+                self.tree.column('#0', width=0, stretch=False)
+            else:
+                # Show all columns on larger screens
+                self.tree.column('#0', width=50, stretch=False)
+    
+    def toggle_fullscreen(self, event=None):
+        """Toggle fullscreen mode"""
+        current_state = self.root.attributes('-fullscreen')
+        self.root.attributes('-fullscreen', not current_state)
+        self.window_state['maximized'] = not current_state
+    
+    def increase_font_size(self, event=None):
+        """Increase font size for better accessibility"""
+        self.font_scale = min(1.5, self.font_scale + 0.1)
+        self.apply_font_scaling()
+    
+    def decrease_font_size(self, event=None):
+        """Decrease font size"""
+        self.font_scale = max(0.7, self.font_scale - 0.1)
+        self.apply_font_scaling()
+    
+    def reset_font_size(self, event=None):
+        """Reset font size to default"""
+        self.font_scale = 1.0
+        self.apply_font_scaling()
+    
+    def apply_font_scaling(self):
+        """Apply current font scaling to UI elements"""
+        try:
+            # Update default font
+            default_font = ('Helvetica', int(10 * self.font_scale))
+            self.root.option_add('*Font', default_font)
+            
+            # Force UI update
+            self.root.update_idletasks()
+            
+            logging.info(f"Font scale applied: {self.font_scale:.1f}x")
+        except Exception as e:
+            ErrorHandler.handle_error(e, "applying font scaling", show_user=False)
+    
+    def on_closing(self):
+        """Handle application closing with cleanup"""
+        try:
+            # Save window state for next session
+            self.save_window_state()
+            
+            # Cleanup resources
+            if hasattr(self, 'dataframe') and self.dataframe is not None:
+                del self.dataframe
+            if hasattr(self, 'filtered_df') and self.filtered_df is not None:
+                del self.filtered_df
+                
+            logging.info("Application closing - cleanup completed")
+            
+        except Exception as e:
+            ErrorHandler.handle_error(e, "application cleanup", show_user=False)
+        finally:
+            self.root.destroy()
+    
+    def save_window_state(self):
+        """Save current window state for next session"""
+        try:
+            import json
+            state_file = 'window_state.json'
+            
+            with open(state_file, 'w') as f:
+                json.dump(self.window_state, f)
+                
+        except Exception as e:
+            logging.warning(f"Could not save window state: {e}")
+    
+    def load_window_state(self):
+        """Load saved window state"""
+        try:
+            import json
+            state_file = 'window_state.json'
+            
+            if os.path.exists(state_file):
+                with open(state_file, 'r') as f:
+                    saved_state = json.load(f)
+                    
+                # Apply saved state if reasonable
+                if (saved_state.get('width', 0) > 800 and 
+                    saved_state.get('height', 0) > 600):
+                    self.window_state.update(saved_state)
+                    
+                    geometry = f"{saved_state['width']}x{saved_state['height']}"
+                    if 'x' in saved_state and 'y' in saved_state:
+                        geometry += f"+{saved_state['x']}+{saved_state['y']}"
+                    
+                    self.root.geometry(geometry)
+                    
+        except Exception as e:
+            logging.warning(f"Could not load window state: {e}")
         
     def initialize_variables(self):
         """Initialize all variables"""
@@ -82,6 +543,56 @@ class Dashboard:
         
         # Status variables
         self.status_var = tk.StringVar(value="Ready")
+
+    def _optimize_dataframe_memory(self, df):
+        """Optimize DataFrame memory usage by converting data types"""
+        if df.empty:
+            return df
+            
+        original_memory = df.memory_usage(deep=True).sum() / 1024**2  # MB
+        
+        for col in df.columns:
+            col_type = df[col].dtype
+            
+            # Convert object columns with few unique values to category
+            if col_type == 'object':
+                unique_ratio = df[col].nunique() / len(df)
+                if unique_ratio < 0.5:  # Less than 50% unique values
+                    df[col] = df[col].astype('category')
+            
+            # Optimize numeric columns
+            elif col_type.kind in 'if':  # integer or float
+                col_min = df[col].min()
+                col_max = df[col].max()
+                
+                if col_type.kind == 'i':  # integer
+                    if col_min >= 0:  # unsigned integers
+                        if col_max < 256:
+                            df[col] = df[col].astype('uint8')
+                        elif col_max < 65536:
+                            df[col] = df[col].astype('uint16')
+                        elif col_max < 4294967296:
+                            df[col] = df[col].astype('uint32')
+                    else:  # signed integers
+                        if col_min >= -128 and col_max < 127:
+                            df[col] = df[col].astype('int8')
+                        elif col_min >= -32768 and col_max < 32767:
+                            df[col] = df[col].astype('int16')
+                        elif col_min >= -2147483648 and col_max < 2147483647:
+                            df[col] = df[col].astype('int32')
+                
+                elif col_type.kind == 'f':  # float
+                    if (df[col] == df[col].astype('float32')).all():
+                        df[col] = df[col].astype('float32')
+        
+        new_memory = df.memory_usage(deep=True).sum() / 1024**2  # MB
+        memory_saved = original_memory - new_memory
+        
+        if memory_saved > 1:  # Only log if significant savings
+            logging.info(f"Memory optimization: {original_memory:.1f}MB -> {new_memory:.1f}MB "
+                        f"(saved {memory_saved:.1f}MB)")
+        
+        return df
 
     def initialize_dataframes(self):
         """Initialize dataframes with empty DataFrames"""
@@ -142,12 +653,12 @@ class Dashboard:
                         style='info.Inverse.TLabel').pack()
 
         except Exception as e:
-            print(f"Error creating summary stats: {str(e)}")
+            ErrorHandler.handle_error(e, "creating summary statistics", show_user=False)
             # Create minimal stats if there's an error
             if hasattr(self, 'stats_frame'):
                 ttk.Label(self.stats_frame, 
-                        text="Statistics unavailable",
-                        style='info.TLabel').pack()
+                        text="Statistics temporarily unavailable",
+                        style='warning.TLabel').pack()
 
     def update_summary_stats(self):
         """Update the summary statistics"""
@@ -1099,27 +1610,83 @@ class Dashboard:
             mappings_text.config(state=tk.DISABLED)
 
     def fetch_submissions_with_all_columns(self, auth):
-        """Fetch submissions ensuring all form columns are included"""
+        """Fetch submissions ensuring all form columns are included with memory optimization"""
         base_url = self.url_var.get().rstrip('/')
         project_id = self.project_id_var.get()
         form_id = self.form_id_var.get()
         
+        # Memory management settings
+        MAX_ROWS_WITHOUT_WARNING = 5000
+        MAX_ROWS_ABSOLUTE = 50000
+        
         try:
             # Method 1: Try to get CSV export (includes all columns)
             csv_url = f"{base_url}/v1/projects/{project_id}/forms/{form_id}/submissions.csv"
-            csv_response = requests.get(csv_url, auth=auth, timeout=60)
+            csv_response = requests.get(csv_url, auth=auth, timeout=60, stream=True)
             
             if csv_response.status_code == 200:
-                # Parse CSV data
+                # Parse CSV data with memory optimization
                 csv_data = StringIO(csv_response.text)
-                df = pd.read_csv(csv_data)
-                return df, "CSV Export"
                 
+                # First, check the size by reading just the first few lines
+                sample_lines = []
+                line_count = 0
+                csv_data.seek(0)
+                for line in csv_data:
+                    sample_lines.append(line)
+                    line_count += 1
+                    if line_count > 5:  # Read first 6 lines to estimate size
+                        break
+                
+                # Estimate total rows (minus header)
+                csv_data.seek(0)
+                total_lines = sum(1 for _ in csv_data) - 1  # Subtract header
+                
+                csv_data.seek(0)
+                
+                # Memory warning for large datasets
+                if total_lines > MAX_ROWS_WITHOUT_WARNING:
+                    if total_lines > MAX_ROWS_ABSOLUTE:
+                        # For very large datasets, sample the data
+                        df = pd.read_csv(csv_data, nrows=MAX_ROWS_ABSOLUTE)
+                        ErrorHandler.show_warning(
+                            f"Dataset has {total_lines} rows. Loaded first {MAX_ROWS_ABSOLUTE} rows to prevent memory issues. "
+                            f"Consider filtering data on the server or downloading in smaller batches.",
+                            "Large Dataset")
+                    else:
+                        # Load all data but warn user
+                        df = pd.read_csv(csv_data)
+                        ErrorHandler.show_info(
+                            f"Loading {total_lines} rows. This may take a moment.", 
+                            "Loading Large Dataset")
+                else:
+                    # Normal size dataset
+                    df = pd.read_csv(csv_data)
+                
+                # Optimize memory usage
+                df = self._optimize_dataframe_memory(df)
+                
+                return df, f"CSV Export ({len(df)} rows)"
+                
+        except MemoryError:
+            ErrorHandler.handle_error("Insufficient memory to load full dataset", 
+                                    "memory management")
+            # Try to load a smaller sample
+            try:
+                csv_data.seek(0)
+                df = pd.read_csv(csv_data, nrows=1000)
+                df = self._optimize_dataframe_memory(df)
+                ErrorHandler.show_warning(
+                    "Loaded sample of 1000 rows due to memory constraints", 
+                    "Memory Limited")
+                return df, "CSV Export (Sample)"
+            except Exception:
+                return pd.DataFrame(), "Memory Error"
         except Exception as e:
-            print(f"CSV export failed: {str(e)}")
+            ErrorHandler.handle_error(e, "CSV export", show_user=False)
         
         try:
-            # Method 2: Get individual submissions with full data
+            # Method 2: Get individual submissions with full data (memory-conscious)
             submissions_url = f"{base_url}/v1/projects/{project_id}/forms/{form_id}/submissions"
             response = requests.get(submissions_url, auth=auth, timeout=30)
             response.raise_for_status()
@@ -1129,10 +1696,17 @@ class Dashboard:
             if not submissions:
                 return pd.DataFrame(), "Empty Response"
             
+            # Limit submissions for memory management
+            max_submissions = min(len(submissions), 1000)  # Process max 1000 submissions
+            if len(submissions) > max_submissions:
+                ErrorHandler.show_info(
+                    f"Processing first {max_submissions} of {len(submissions)} submissions", 
+                    "Memory Optimization")
+            
             # Process each submission to get full data
             full_submissions = []
             
-            for submission in submissions[:5]:  # Test with first 5 submissions
+            for submission in submissions[:max_submissions]:
                 instance_id = submission.get('instanceId')
                 if instance_id:
                     # Get full submission data
@@ -1220,7 +1794,7 @@ class Dashboard:
         
     def generate_visualization(self):
         if self.filtered_df is None or self.filtered_df.empty:
-            messagebox.showwarning("Warning", "No data available for visualization")
+            ErrorHandler.show_warning("No data available for visualization. Please download data first.")
             return
         
         chart_type = self.chart_type_var.get()
@@ -1230,16 +1804,31 @@ class Dashboard:
         column = self.extract_column_name_from_display(display_column) if display_column else ""
         
         if not column and chart_type not in ["Correlation", "Time Series"]:
-            messagebox.showwarning("Warning", "Please select a column to visualize")
+            ErrorHandler.show_warning("Please select a column to visualize for this chart type.")
             return
         
         if column and column not in self.filtered_df.columns:
-            messagebox.showerror("Error", f"Column '{column}' not found in data")
+            ErrorHandler.show_warning(f"Column '{column}' not found in current data. Please refresh the data.")
             return
+        
+        # Check data size for performance warning
+        data_size = len(self.filtered_df)
+        if data_size > 10000:
+            result = messagebox.askyesno("Large Dataset", 
+                f"You're visualizing {data_size} records. This may take a moment. Continue?")
+            if not result:
+                return
         
         # Clear existing chart
         for widget in self.chart_frame.winfo_children():
             widget.destroy()
+        
+        # Show loading indicator
+        loading_label = ttk.Label(self.chart_frame, 
+                                text="Generating visualization...",
+                                font=('Helvetica', 12))
+        loading_label.pack(expand=True)
+        self.root.update()
         
         try:
             # Create figure and place it in the chart frame
@@ -1255,14 +1844,27 @@ class Dashboard:
                 self.create_horizontal_bar_chart(self.chart_frame, column)
             elif chart_type == "Stacked Bar":
                 self.create_stacked_bar_chart(self.chart_frame, column)
+                
+            # Remove loading indicator
+            loading_label.destroy()
+            
+        except MemoryError as e:
+            loading_label.destroy()
+            ErrorHandler.handle_error(e, "creating visualization (insufficient memory)")
+            self._show_visualization_fallback("Memory error: Dataset too large for visualization")
         except Exception as e:
-            messagebox.showerror("Error", f"Visualization failed: {str(e)}")
-            # Restore placeholder
-            self.chart_placeholder = ttk.Label(self.chart_frame, 
-                                            text="Visualization failed. Please try again.",
-                                            font=('Helvetica', 12),
-                                            anchor='center')
-            self.chart_placeholder.pack(expand=True)
+            loading_label.destroy()
+            ErrorHandler.handle_error(e, "creating visualization")
+            self._show_visualization_fallback("Visualization failed. Please try a different chart type or smaller dataset.")
+    
+    def _show_visualization_fallback(self, message):
+        """Show fallback message when visualization fails"""
+        self.chart_placeholder = ttk.Label(self.chart_frame, 
+                                        text=message,
+                                        font=('Helvetica', 11),
+                                        anchor='center',
+                                        foreground='red')
+        self.chart_placeholder.pack(expand=True)
 
     def create_pie_chart(self, parent, column):
         # Create a figure with dynamic size
@@ -1321,42 +1923,133 @@ class Dashboard:
         ax.set_facecolor('white')
         
         try:
-            date_columns = [col for col in self.filtered_df.columns 
-                        if any(date_term in col.lower() for date_term in 
-                                ['date', 'time', 'created', 'updated', 'submission'])]
+            # Use enhanced date detection
+            date_columns = DateUtils.detect_date_columns(self.filtered_df)
             
             if not date_columns:
-                raise ValueError("No date columns found")
+                raise ValueError("No date columns found for time series analysis")
             
-            date_col = date_columns[0]
-            date_series = pd.to_datetime(self.filtered_df[date_col], errors='coerce')
-            valid_dates = date_series.dropna()
+            # Try each date column until we find one that works
+            successful_conversion = False
+            date_col = None
+            converted_dates = None
+            
+            for col in date_columns:
+                success, error_msg, dates = DateUtils.convert_column_to_datetime(
+                    self.filtered_df, col)
+                
+                if success and dates is not None:
+                    date_col = col
+                    converted_dates = dates
+                    successful_conversion = True
+                    
+                    if error_msg:  # Warning about some failed conversions
+                        logging.warning(f"Date conversion warning for {col}: {error_msg}")
+                    break
+            
+            if not successful_conversion:
+                raise ValueError("Could not parse dates in any detected date column")
+            
+            # Filter out invalid dates
+            valid_dates = converted_dates.dropna()
             
             if valid_dates.empty:
-                raise ValueError("No valid dates found")
+                raise ValueError("No valid dates found after parsing")
             
-            submissions_by_date = valid_dates.value_counts().sort_index()
+            # Check for reasonable date range
+            min_date = valid_dates.min()
+            max_date = valid_dates.max()
+            
+            is_valid, range_error = DateUtils.validate_date_range(min_date, max_date)
+            if not is_valid:
+                ErrorHandler.show_warning(f"Date range issue: {range_error}")
+            
+            # Create time series aggregation
+            # Group by date (day) and count submissions
+            date_only = valid_dates.dt.date
+            submissions_by_date = date_only.value_counts().sort_index()
+            
+            # Convert index back to datetime for plotting
+            submissions_by_date.index = pd.to_datetime(submissions_by_date.index)
+            
+            # Plot the time series
             ax.plot(submissions_by_date.index, submissions_by_date.values, 
-                    marker='o', linestyle='-', linewidth=2, color='#2196F3')
+                   marker='o', linestyle='-', linewidth=2, color='#2196F3',
+                   markersize=4, alpha=0.8)
             
-            ax.set_title(f'Submissions Over Time ({date_col})', color='black', pad=20, fontsize=12)
-            ax.set_xlabel('Date', color='black')
-            ax.set_ylabel('Number of Submissions', color='black')
-            ax.grid(True, alpha=0.3)
+            # Add trend line if enough data points and scipy is available
+            if len(submissions_by_date) > 5 and HAS_SCIPY:
+                try:
+                    from scipy import stats
+                    x_numeric = np.arange(len(submissions_by_date))
+                    slope, intercept, r_value, p_value, std_err = stats.linregress(
+                        x_numeric, submissions_by_date.values)
+                    
+                    trend_line = slope * x_numeric + intercept
+                    ax.plot(submissions_by_date.index, trend_line, 
+                           '--', color='red', alpha=0.7, linewidth=1,
+                           label=f'Trend (R²={r_value**2:.3f})')
+                    ax.legend()
+                except Exception as e:
+                    logging.warning(f"Could not add trend line: {e}")
+            
+            # Enhanced formatting
+            column_label = self.get_column_label(date_col)
+            ax.set_title(f'Submissions Over Time\n({column_label})', 
+                        color='black', pad=20, fontsize=12, fontweight='bold')
+            ax.set_xlabel('Date', color='black', fontsize=10)
+            ax.set_ylabel('Number of Submissions', color='black', fontsize=10)
+            ax.grid(True, alpha=0.3, linestyle=':')
             
             # Style the axes
-            ax.tick_params(colors='black')
+            ax.tick_params(colors='black', labelsize=9)
             for spine in ax.spines.values():
                 spine.set_color('black')
+                spine.set_linewidth(0.8)
             
-            # Rotate x-axis labels
+            # Smart date formatting on x-axis
+            if HAS_MATPLOTLIB_DATES:
+                try:
+                    import matplotlib.dates as mdates
+                    date_range = (max_date - min_date).days
+                    
+                    if date_range <= 7:  # Week or less
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+                        ax.xaxis.set_major_locator(mdates.DayLocator())
+                    elif date_range <= 90:  # 3 months or less
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+                        ax.xaxis.set_major_locator(mdates.WeekdayLocator())
+                    elif date_range <= 365:  # Year or less
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+                        ax.xaxis.set_major_locator(mdates.MonthLocator())
+                    else:  # More than a year
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+                        ax.xaxis.set_major_locator(mdates.YearLocator())
+                except Exception as e:
+                    logging.warning(f"Could not apply date formatting: {e}")
+                    # Fall back to default formatting
+            
+            # Rotate x-axis labels for better readability
             plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+            
+            # Add statistics text
+            stats_text = f'Total: {len(valid_dates)} submissions\n'
+            stats_text += f'Period: {DateUtils.format_date_for_display(min_date)} to {DateUtils.format_date_for_display(max_date)}\n'
+            stats_text += f'Daily avg: {len(valid_dates)/max(1, date_range):.1f}'
+            
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+                   verticalalignment='top', bbox=dict(boxstyle='round', 
+                   facecolor='wheat', alpha=0.8), fontsize=8)
             
             fig.tight_layout()
             
         except Exception as e:
-            messagebox.showerror("Error", f"Could not create time series plot: {str(e)}")
-            return
+            ErrorHandler.handle_error(e, "creating time series plot")
+            # Create a simple error message plot
+            ax.text(0.5, 0.5, f'Time series plot unavailable\n{str(e)[:50]}...', 
+                   transform=ax.transAxes, ha='center', va='center',
+                   bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.8))
+            ax.set_title('Time Series Plot Error', color='red')
         
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
@@ -1876,17 +2569,32 @@ class Dashboard:
         try:
             auth = (self.username_var.get(), self.password_var.get())
             
+            # Validate authentication before proceeding
+            if not auth[0] or not auth[1]:
+                self.root.after(0, lambda: ErrorHandler.show_warning(
+                    "Please enter both username and password", "Authentication Required"))
+                return
+            
             # First, try to get form schema
             self.get_form_schema(auth)
             
             # Fetch submissions with all columns
             self.dataframe, method_used = self.fetch_submissions_with_all_columns(auth)
             
-            if self.dataframe.empty:
+            if self.dataframe is None or self.dataframe.empty:
+                self.root.after(0, lambda: ErrorHandler.show_warning(
+                    "No data found. Please check your form ID and permissions.", 
+                    "No Data Available"))
                 self.root.after(0, lambda: self.status_var.set("No data available"))
-                self.root.after(0, lambda: self.progress.stop())
                 return
             
+            # Check data quality
+            if len(self.dataframe.columns) == 0:
+                self.root.after(0, lambda: ErrorHandler.show_warning(
+                    "Data has no columns. The form may be empty or inaccessible.", 
+                    "Data Quality Issue"))
+                return
+                
             self.filtered_df = self.dataframe.copy()
             
             # Update last update time
@@ -1897,8 +2605,36 @@ class Dashboard:
             # Update summary stats
             self.root.after(0, self.update_summary_stats)
             
+            # Show success message
+            row_count = len(self.dataframe)
+            col_count = len(self.dataframe.columns)
+            self.root.after(0, lambda: ErrorHandler.show_success(
+                f"Successfully downloaded {row_count} records with {col_count} columns"))
+            
+        except requests.exceptions.ConnectionError as e:
+            self.root.after(0, lambda: ErrorHandler.handle_error(
+                e, "connecting to ODK Central server"))
+            self.root.after(0, lambda: self.status_var.set("Connection failed"))
+        except requests.exceptions.Timeout as e:
+            self.root.after(0, lambda: ErrorHandler.handle_error(
+                e, "downloading data (server timeout)"))
+            self.root.after(0, lambda: self.status_var.set("Download timeout"))
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                self.root.after(0, lambda: ErrorHandler.handle_error(
+                    "Invalid credentials", "authentication"))
+            elif e.response.status_code == 403:
+                self.root.after(0, lambda: ErrorHandler.handle_error(
+                    "Access denied. Check your permissions", "authorization"))
+            elif e.response.status_code == 404:
+                self.root.after(0, lambda: ErrorHandler.handle_error(
+                    "Form not found. Check your project and form IDs", "data access"))
+            else:
+                self.root.after(0, lambda: ErrorHandler.handle_error(
+                    e, f"HTTP error ({e.response.status_code})"))
+            self.root.after(0, lambda: self.status_var.set("Download failed"))
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Error", f"Download failed: {str(e)}"))
+            self.root.after(0, lambda: ErrorHandler.handle_error(e, "downloading data"))
             self.root.after(0, lambda: self.status_var.set("Download failed"))
         finally:
             self.root.after(0, lambda: self.progress.stop())
