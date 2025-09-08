@@ -40,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 CURRENT_USER = os.getlogin()
-VERSION = "2.0.0"
+VERSION = "2.0.1"  # Updated version number
 
 def error_handler(func):
     """Decorator for comprehensive error handling"""
@@ -135,7 +135,10 @@ class DataCache:
         """Cache data with metadata"""
         try:
             conn = sqlite3.connect(self.db_path)
-            data_blob = data.to_pickle()
+            # Create a BytesIO object to store the pickled data
+            data_blob_buffer = BytesIO()
+            data.to_pickle(data_blob_buffer)  # Fix: Pass BytesIO object as path
+            data_blob = data_blob_buffer.getvalue()  # Get the binary data
             
             conn.execute('''
                 INSERT OR REPLACE INTO cache_data 
@@ -224,7 +227,7 @@ class ODKDataManager:
             if csv_response.status_code == 200:
                 csv_data = StringIO(csv_response.text)
                 df = pd.read_csv(csv_data)
-                if use_cache:
+                if use_cache and not df.empty:
                     self.cache.cache_data(cache_key, df, form_id)
                 return df, "CSV Export"
                 
@@ -256,7 +259,7 @@ class ODKDataManager:
             
             if full_submissions:
                 df = pd.json_normalize(full_submissions)
-                if use_cache:
+                if use_cache and not df.empty:
                     self.cache.cache_data(cache_key, df, form_id)
                 return df, "Individual Submissions"
                 
@@ -273,7 +276,7 @@ class ODKDataManager:
                 return pd.DataFrame(), "No Data"
             
             df = pd.json_normalize(data, sep='_')
-            if use_cache:
+            if use_cache and not df.empty:
                 self.cache.cache_data(cache_key, df, form_id)
             
             return df, "Standard API"
@@ -702,12 +705,12 @@ class Dashboard:
         date_from_calendar.set_date(datetime.now().date() - timedelta(days=30))
         date_to_calendar.set_date(datetime.now().date())
 
-        # Connect date widgets to variables
+        # Connect date widgets to variables - FIXED to use entry.get()
         def update_date_from(event):
-            self.date_from_var.set(date_from_calendar.get())
+            self.date_from_var.set(date_from_calendar.entry.get())
         
         def update_date_to(event):
-            self.date_to_var.set(date_to_calendar.get())
+            self.date_to_var.set(date_to_calendar.entry.get())
         
         date_from_calendar.bind('<<DateEntrySelected>>', update_date_from)
         date_to_calendar.bind('<<DateEntrySelected>>', update_date_to)
@@ -1128,7 +1131,10 @@ class Dashboard:
                     
             except Exception as e:
                 logger.warning(f"Could not fetch XLSForm from ODK Central: {e}")
-            
+                # Add better handling for missing XLSForm (improved)
+                if "404" in str(e):
+                    logger.info(f"XLSForm not available for form {form_id}. This is normal if the form was not uploaded as XLSForm.")
+                
             return True
             
         except Exception as e:
@@ -2070,16 +2076,16 @@ class Dashboard:
         
         def test_in_thread():
             try:
-                success, message = self.odk_manager.safe_api_call(
+                response = self.odk_manager.safe_api_call(
                     f"{url.rstrip('/')}/v1/projects",
                     (username, password),
                     timeout=10
                 )
                 
-                if success:
+                if response and response.status_code == 200:
                     self.root.after(0, lambda: messagebox.showinfo("Connection Test", "✅ Connection successful!"))
                 else:
-                    self.root.after(0, lambda: messagebox.showerror("Connection Test", f"❌ Connection failed: {message}"))
+                    self.root.after(0, lambda: messagebox.showerror("Connection Test", f"❌ Connection failed: {response.status_code if response else 'No response'}"))
                     
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror("Connection Test", f"❌ Connection failed: {str(e)}"))
