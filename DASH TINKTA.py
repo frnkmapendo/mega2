@@ -584,24 +584,32 @@ class Dashboard:
         style.configure("TLabel", foreground="blue", background="#252323", font=("Segoe UI", 10))
         style.configure("TEntry", fieldbackground="#1e1e1e", foreground="lime", insertcolor="yellow")
 
-        # Connection form
-        ttk.Label(connection_frame, text="ODK URL:").grid(row=0, column=0, sticky="w", pady=2)
-        ttk.Entry(connection_frame, textvariable=self.url_var, width=40).grid(row=0, column=1, pady=2, padx=5)
+        # Create left frame for connection inputs
+        left_frame = ttk.Frame(connection_frame)
+        left_frame.pack(side="left", fill="both", expand=True)
         
-        ttk.Label(connection_frame, text="Project ID:").grid(row=1, column=0, sticky="w", pady=2)
-        ttk.Entry(connection_frame, textvariable=self.project_id_var, width=40).grid(row=1, column=1, pady=2, padx=5)
+        # Create right frame for statistics
+        right_frame = ttk.Frame(connection_frame)
+        right_frame.pack(side="right", fill="y", padx=(20, 0))
         
-        ttk.Label(connection_frame, text="Form ID:").grid(row=2, column=0, sticky="w", pady=2)
-        ttk.Entry(connection_frame, textvariable=self.form_id_var, width=40).grid(row=2, column=1, pady=2, padx=5)
+        # Connection form in left frame
+        ttk.Label(left_frame, text="ODK URL:").grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Entry(left_frame, textvariable=self.url_var, width=40).grid(row=0, column=1, pady=2, padx=5)
         
-        ttk.Label(connection_frame, text="Username:").grid(row=0, column=2, sticky="w", pady=2, padx=(20, 0))
-        ttk.Entry(connection_frame, textvariable=self.username_var, width=20).grid(row=0, column=3, pady=2, padx=5)
+        ttk.Label(left_frame, text="Project ID:").grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Entry(left_frame, textvariable=self.project_id_var, width=40).grid(row=1, column=1, pady=2, padx=5)
         
-        ttk.Label(connection_frame, text="Password:").grid(row=1, column=2, sticky="w", pady=2, padx=(20, 0))
-        ttk.Entry(connection_frame, textvariable=self.password_var, show="*", width=20).grid(row=1, column=3, pady=2, padx=5)
+        ttk.Label(left_frame, text="Form ID:").grid(row=2, column=0, sticky="w", pady=2)
+        ttk.Entry(left_frame, textvariable=self.form_id_var, width=40).grid(row=2, column=1, pady=2, padx=5)
+        
+        ttk.Label(left_frame, text="Username:").grid(row=0, column=2, sticky="w", pady=2, padx=(20, 0))
+        ttk.Entry(left_frame, textvariable=self.username_var, width=20).grid(row=0, column=3, pady=2, padx=5)
+        
+        ttk.Label(left_frame, text="Password:").grid(row=1, column=2, sticky="w", pady=2, padx=(20, 0))
+        ttk.Entry(left_frame, textvariable=self.password_var, show="*", width=20).grid(row=1, column=3, pady=2, padx=5)
         
         # Connection buttons
-        btn_frame = ttk.Frame(connection_frame)
+        btn_frame = ttk.Frame(left_frame)
         btn_frame.grid(row=3, column=0, columnspan=4, pady=10)
         
         ttk.Button(btn_frame, text="Test Connection", command=self.test_connection).pack(side="left", padx=5)
@@ -612,10 +620,38 @@ class Dashboard:
         ttk.Button(btn_frame, text="Load Survey File", command=self.load_survey_file).pack(side="left", padx=5)
 
         # Progress Bar
-        progress_frame = ttk.Frame(connection_frame)
+        progress_frame = ttk.Frame(left_frame)
         progress_frame.grid(row=4, column=0, columnspan=4, pady=5)
         self.progress = ttk.Progressbar(progress_frame, orient=HORIZONTAL, length=400, mode='determinate')
         self.progress.pack(fill="x")
+        
+        # Data submission statistics in right frame
+        stats_frame = ttk.LabelFrame(right_frame, text="Data Submission", padding=10)
+        stats_frame.pack(fill="both", expand=True)
+
+        # Total submissions counter
+        total_counter_frame = ttk.Frame(stats_frame, style='primary.TFrame')
+        total_counter_frame.pack(side="top", padx=10, pady=5, fill="x")
+
+        ttk.Label(total_counter_frame, text="Data Submitted", 
+                style='primary.Inverse.TLabel').pack(pady=2)
+        total_count_label = ttk.Label(total_counter_frame, 
+                                    textvariable=self.submission_count_var,
+                                    style='primary.TLabel',
+                                    font=('Helvetica', 16, 'bold'))
+        total_count_label.pack()
+
+        # Filtered submissions counter
+        filtered_counter_frame = ttk.Frame(stats_frame, style='info.TFrame')
+        filtered_counter_frame.pack(side="top", padx=10, pady=5, fill="x")
+
+        ttk.Label(filtered_counter_frame, text="Filtered ", 
+                style='info.Inverse.TLabel').pack(pady=2)
+        filtered_count_label = ttk.Label(filtered_counter_frame, 
+                                        textvariable=self.filtered_count_var,
+                                        style='info.TLabel',
+                                        font=('calibri', 16, 'bold'))
+        filtered_count_label.pack()
 
     def create_filter_frame(self):
         """Create filter frame"""
@@ -683,34 +719,7 @@ class Dashboard:
                 command=self.apply_filters, style='success.TButton').pack(side="left", padx=5)
         ttk.Button(filter_buttons, text="Reset Filters", 
                 command=self.reset_filters, style='warning.TButton').pack(side="right", padx=5)
-        
-        # Statistics section
-        stats_frame = ttk.LabelFrame(filter_frame, text="Data Submission", padding=10)
-        stats_frame.pack(fill="x", padx=5, pady=5)
-
-        # Total submissions counter
-        total_counter_frame = ttk.Frame(stats_frame, style='primary.TFrame')
-        total_counter_frame.pack(side="left", padx=10, pady=5)
-
-        ttk.Label(total_counter_frame, text="Data Submitted", 
-                style='primary.Inverse.TLabel').pack(pady=2)
-        total_count_label = ttk.Label(total_counter_frame, 
-                                    textvariable=self.submission_count_var,
-                                    style='primary.TLabel',
-                                    font=('Helvetica', 16, 'bold'))
-        total_count_label.pack()
-
-        # Filtered submissions counter
-        filtered_counter_frame = ttk.Frame(stats_frame, style='info.TFrame')
-        filtered_counter_frame.pack(side="left", padx=10, pady=5)
-
-        ttk.Label(filtered_counter_frame, text="Filtered ", 
-                style='info.Inverse.TLabel').pack(pady=2)
-        filtered_count_label = ttk.Label(filtered_counter_frame, 
-                                        textvariable=self.filtered_count_var,
-                                        style='info.TLabel',
-                                        font=('calibri', 16, 'bold'))
-        filtered_count_label.pack()
+        #########
 
     def create_data_frame(self):
         """Create data frame"""
