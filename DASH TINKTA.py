@@ -457,11 +457,8 @@ class Dashboard:
         # User info frame
         self.create_user_info_frame()
         
-        # Connection frame
+        # Connection frame (now includes filter controls)
         self.create_connection_frame()
-        
-        # Filter frame
-        self.create_filter_frame()
         
         # Data frame
         self.create_data_frame()
@@ -591,9 +588,13 @@ class Dashboard:
         left_frame = ttk.Frame(connection_frame)
         left_frame.pack(side="left", fill="both", expand=True)
         
+        # Create middle frame for filter controls
+        middle_frame = ttk.Frame(connection_frame)
+        middle_frame.pack(side="left", fill="y", padx=(10, 5))
+        
         # Create right frame for statistics
         right_frame = ttk.Frame(connection_frame)
-        right_frame.pack(side="right", fill="y", padx=(20, 0))
+        right_frame.pack(side="right", fill="y", padx=(5, 0))
         
         # Connection form in left frame
         ttk.Label(left_frame, text="ODK URL:").grid(row=0, column=0, sticky="w", pady=2)
@@ -628,6 +629,74 @@ class Dashboard:
         self.progress = ttk.Progressbar(progress_frame, orient=HORIZONTAL, length=400, mode='determinate')
         self.progress.pack(fill="x")
         
+        # Filter controls in the middle frame
+        filter_frame = ttk.LabelFrame(middle_frame, text="Filters", padding=(5, 5, 5, 5))
+        filter_frame.pack(fill="both", expand=True)
+        
+        # Filter column controls
+        filter_columns_frame = ttk.Frame(filter_frame)
+        filter_columns_frame.pack(fill="x", padx=2, pady=(5, 2))
+        
+        ttk.Label(filter_columns_frame, text="Filter variable:").grid(row=0, column=0, sticky="w")
+        self.filter_column_combo = ttk.Combobox(filter_columns_frame, textvariable=self.filter_column_var, width=10)
+        self.filter_column_combo.grid(row=0, column=1, padx=(2, 5))
+        
+        ttk.Label(filter_columns_frame, text="Filter Value:").grid(row=0, column=2, sticky="w")
+        ttk.Entry(filter_columns_frame, textvariable=self.filter_value_var, width=10).grid(row=0, column=3, padx=(2, 5))
+        
+        # Date filter controls - adjusted to reduce spacing
+        date_frame = ttk.Frame(filter_frame)
+        date_frame.pack(fill="x", padx=2, pady=(5, 2))
+        
+        # Date From with minimal padding between label and control
+        date_from_label = ttk.Label(date_frame, text="Date From:")
+        date_from_label.grid(row=0, column=0, sticky="w")
+        
+        date_from_calendar = DateEntry(
+            date_frame,
+            dateformat='%Y-%m-%d',
+            width=10,  
+            borderwidth=2,
+            firstweekday=0,
+            startdate=datetime.now().date() - timedelta(days=30),
+            bootstyle="primary"
+        )
+        date_from_calendar.grid(row=0, column=1, padx=(2, 10), pady=2) 
+        
+        # Date To with minimal padding
+        date_to_label = ttk.Label(date_frame, text="Date To:")
+        date_to_label.grid(row=0, column=2, sticky="w")
+        
+        date_to_calendar = DateEntry(
+            date_frame,
+            dateformat='%Y-%m-%d',
+            width=10,  
+            borderwidth=2,
+            firstweekday=0,
+            startdate=datetime.now().date(),
+            bootstyle="secondary"
+        )
+        date_to_calendar.grid(row=0, column=3, padx=(2, 0), pady=2)  # Reduced padding
+        
+        # Connect date widgets to variables
+        def update_date_from(event):
+            self.date_from_var.set(date_from_calendar.entry.get())
+        
+        def update_date_to(event):
+            self.date_to_var.set(date_to_calendar.entry.get())
+        
+        date_from_calendar.bind('<<DateEntrySelected>>', update_date_from)
+        date_to_calendar.bind('<<DateEntrySelected>>', update_date_to)
+        
+        # Filter buttons
+        buttons_frame = ttk.Frame(filter_frame)
+        buttons_frame.pack(fill="x", padx=2, pady=(5, 2))
+        
+        ttk.Button(buttons_frame, text="Apply Filters", 
+                command=self.apply_filters, style='success.TButton').pack(side="left", padx=2)
+        ttk.Button(buttons_frame, text="Reset Filters", 
+                command=self.reset_filters, style='warning.TButton').pack(side="right", padx=2)
+        
         # Data submission statistics in right frame
         stats_frame = ttk.LabelFrame(right_frame, text="Data Submission", padding=10)
         stats_frame.pack(fill="both", expand=True)
@@ -656,72 +725,7 @@ class Dashboard:
                                         font=('calibri', 16, 'bold'))
         filtered_count_label.pack()
 
-    def create_filter_frame(self):
-        """Create filter frame"""
-        filter_frame = ttk.LabelFrame(self.root, text="Filters", padding=10)
-        filter_frame.pack(fill="x", padx=10, pady=5)
-
-        # Filter section
-        filter_controls = ttk.Frame(filter_frame)
-        filter_controls.pack(fill="x", padx=5, pady=5)
-        
-        # Column filter
-        ttk.Label(filter_controls, text="Filter Column:").grid(row=0, column=0, sticky="w", pady=2)
-        self.filter_column_combo = ttk.Combobox(filter_controls, textvariable=self.filter_column_var, width=30)
-        self.filter_column_combo.grid(row=0, column=1, pady=2, padx=5)
-        
-        ttk.Label(filter_controls, text="Filter Value:").grid(row=0, column=2, sticky="w", pady=2)
-        ttk.Entry(filter_controls, textvariable=self.filter_value_var, width=20).grid(row=0, column=3, pady=2, padx=5)
-                
-        ttk.Label(filter_controls, text="Date From:").grid(row=1, column=0, sticky="w", pady=2)
-
-        # Date From calendar dropdown
-        date_from_calendar = DateEntry(
-            filter_controls,
-            dateformat='%Y-%m-%d',
-            width=12,
-            borderwidth=2,
-            firstweekday=0,
-            startdate=datetime.now().date(),
-            bootstyle="primary"
-        )
-        date_from_calendar.grid(row=1, column=1, pady=2, padx=5)
-
-        ttk.Label(filter_controls, text="Date To:").grid(row=1, column=2, sticky="w", pady=2)
-
-        # Date To calendar dropdown
-        date_to_calendar = DateEntry(
-            filter_controls,
-            dateformat='%Y-%m-%d',
-            width=12,
-            borderwidth=2,
-            firstweekday=0,
-            startdate=datetime.now().date(),
-            bootstyle="secondary"
-        )
-        date_to_calendar.grid(row=1, column=3, pady=2, padx=5)
-
-        # Set default dates
-        date_from_calendar.set_date(datetime.now().date() - timedelta(days=30))
-        date_to_calendar.set_date(datetime.now().date())
-
-        # Connect date widgets to variables - FIXED to use entry.get()
-        def update_date_from(event):
-            self.date_from_var.set(date_from_calendar.entry.get())
-        
-        def update_date_to(event):
-            self.date_to_var.set(date_to_calendar.entry.get())
-        
-        date_from_calendar.bind('<<DateEntrySelected>>', update_date_from)
-        date_to_calendar.bind('<<DateEntrySelected>>', update_date_to)
-
-        filter_buttons = ttk.Frame(filter_frame)
-        filter_buttons.pack(fill="x", padx=5, pady=5)
-        
-        ttk.Button(filter_buttons, text="Apply Filters", 
-                command=self.apply_filters, style='success.TButton').pack(side="left", padx=5)
-        ttk.Button(filter_buttons, text="Reset Filters", 
-                command=self.reset_filters, style='warning.TButton').pack(side="right", padx=5)
+#################################
         #########
 
     def create_data_frame(self):
