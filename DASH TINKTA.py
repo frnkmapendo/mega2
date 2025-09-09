@@ -27,6 +27,8 @@ import time
 from functools import wraps
 import hashlib
 from pathlib import Path
+from matplotlib.widgets import RectangleSelector
+import matplotlib.transforms as transforms
 
 # Configure logging
 logging.basicConfig(
@@ -811,7 +813,7 @@ class Dashboard:
         self.charts_frame.grid_columnconfigure(0, weight=1)
         self.charts_frame.grid_columnconfigure(1, weight=1)
         
-        self.charts_frame.bind('<Configure>', self.on_frame_configure)
+        self.charts_frame.bind('<Configure>', lambda e: self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all")))
         self.viz_canvas.bind('<Configure>', self.on_canvas_configure)
         
         # Initialize chart tracking
@@ -844,16 +846,20 @@ class Dashboard:
                 style='danger.TButton').pack(side="left", padx=5) 
 
     def setup_charts_canvas(self, parent):
-        """Set up the scrollable canvas for charts"""
+        """Set up the scrollable canvas for charts with zoom support"""
         canvas_frame = ttk.Frame(parent)
         canvas_frame.pack(fill="both", expand=True, padx=5, pady=5)
         
         self.viz_canvas = tk.Canvas(canvas_frame, bg='#2b2b2b')
-        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", 
+        scrollbar_y = ttk.Scrollbar(canvas_frame, orient="vertical", 
                                 command=self.viz_canvas.yview)
-        self.viz_canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar_x = ttk.Scrollbar(canvas_frame, orient="horizontal", 
+                                command=self.viz_canvas.xview)
+        self.viz_canvas.configure(yscrollcommand=scrollbar_y.set,
+                                xscrollcommand=scrollbar_x.set)
         
-        scrollbar.pack(side="right", fill="y")
+        scrollbar_y.pack(side="right", fill="y")
+        scrollbar_x.pack(side="bottom", fill="x")
         self.viz_canvas.pack(side="left", fill="both", expand=True)
         
         self.charts_frame = ttk.Frame(self.viz_canvas)
@@ -878,28 +884,67 @@ class Dashboard:
         
         # Add placeholder
         self.add_chart_placeholder()
+        
+        # Add bindings for mouse zoom/pan
+        self.viz_canvas.bind("<MouseWheel>", self.on_mousewheel)
+        self.viz_canvas.bind("<Button-2>", self.start_pan)
+        self.viz_canvas.bind("<B2-Motion>", self.pan_canvas)
 
-    def add_chart_placeholder(self):
-        """Add placeholder message when no charts are present"""
-        self.chart_placeholder = ttk.Label(
-            self.charts_frame,
-            text="Select a column and chart type, then click 'Add Chart' to create visualizations",
-            font=('Helvetica', 12),
-            anchor='center'
-        )
-        self.chart_placeholder.grid(row=0, column=0, columnspan=2, pady=20)
+    # Add these new methods to handle zooming and panning
+    def on_mousewheel(self, event):
+        """Handle mouse wheel events for zooming"""
+        # Determine zoom direction (in/out)
+        if event.delta > 0:
+            scale_factor = 1.1  # Zoom in
+        else:
+            scale_factor = 0.9  # Zoom out
+        
+        # Get the chart under the cursor
+        chart_widget = event.widget.winfo_containing(event.x_root, event.y_root)
+        
+        # Find the relevant chart in the grid
+        for chart_container in self.chart_grid:
+            if chart_widget and chart_widget.winfo_toplevel() == chart_container.winfo_toplevel():
+                # Find the matplotlib canvas widget in the chart container
+                for child in chart_container.winfo_children():
+                    if isinstance(child, FigureCanvasTkAgg):
+                        # Apply zoom to the figure
+                        fig = child.figure
+                        current_xlim = fig.axes[0].get_xlim()
+                        current_ylim = fig.axes[0].get_ylim()
+                        
+                        # Get the cursor position as data coordinates
+                        ax = fig.axes[0]
+                        transform = ax.transData.inverted()
+                        mouse_x, mouse_y = transform.transform((event.x, event.y))
+                        
+                        # Calculate new limits
+                        new_xlim = [
+                            mouse_x - (mouse_x - current_xlim[0]) / scale_factor,
+                            mouse_x + (current_xlim[1] - mouse_x) / scale_factor
+                        ]
+                        new_ylim = [
+                            mouse_y - (mouse_y - current_ylim[0]) / scale_factor,
+                            mouse_y + (current_ylim[1] - mouse_y) / scale_factor
+                        ]
+                        
+                        # Apply new limits
+                        ax.set_xlim(new_xlim)
+                        ax.set_ylim(new_ylim)
+                        child.draw_idle()
+                        break
 
-    def on_frame_configure(self, event):
-        """Configure scroll region when frame size changes"""
-        self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all"))
+    def start_pan(self, event):
+        """Start panning the canvas"""
+        self.viz_canvas.scan_mark(event.x, event.y)
 
-    def on_canvas_configure(self, event):
-        """Configure canvas window size"""
-        self.viz_canvas.itemconfig(self.canvas_window, width=event.width)
+    def pan_canvas(self, event):
+        """Pan the canvas with mouse movement"""
+        self.viz_canvas.scan_dragto(event.x, event.y, gain=1)
 
-    @error_handler
+    # Modify the add_visualization method to add zoom controls
     def add_visualization(self):
-        """Add a new chart to the visualization grid"""
+        """Add a new chart to the visualization grid with zoom functionality"""
         if self.filtered_df is None or self.filtered_df.empty:
             messagebox.showwarning("Warning", "No data available for visualization")
             return
@@ -919,15 +964,29 @@ class Dashboard:
         
         # Create frame for the new chart
         chart_container = ttk.LabelFrame(self.charts_frame, 
-                                    text=f"{chart_type}: {display_column}", 
-                                    padding=10)
+                                        text=f"{chart_type}: {display_column}", 
+                                        padding=10)
         
         # Add to grid
         chart_container.grid(row=self.current_row, column=self.current_col,
                             padx=5, pady=5, sticky="nsew")
         
+        # Create button frame
+        btn_frame = ttk.Frame(chart_container)
+        btn_frame.pack(side="top", fill="x")
+        
+        # Add fit to screen button
+        fit_btn = ttk.Button(btn_frame, text="🔍 Fit", width=6,
+                            command=lambda: self.fit_chart_to_screen(chart_container))
+        fit_btn.pack(side="right", padx=2, pady=2)
+        
+        # Add reset zoom button
+        reset_btn = ttk.Button(btn_frame, text="⟲ Reset", width=6,
+                            command=lambda: self.reset_chart_zoom(chart_container))
+        reset_btn.pack(side="right", padx=2, pady=2)
+        
         # Add close button
-        close_btn = ttk.Button(chart_container, text="×", width=3,
+        close_btn = ttk.Button(btn_frame, text="×", width=3,
                             command=lambda: self.remove_chart(chart_container))
         close_btn.pack(side="right", padx=2, pady=2)
         
@@ -945,21 +1004,108 @@ class Dashboard:
                 self.create_horizontal_bar_chart(chart_container, column)
             elif chart_type == "Stacked Bar":
                 self.create_stacked_bar_chart(chart_container, column)
+        except Exception as e:
+            logger.error(f"Failed to create {chart_type} chart: {e}")
+            messagebox.showerror("Chart Error", f"Failed to create chart: {str(e)}")
+            chart_container.destroy()
+            return
             
             # Update grid position
             self.current_col = (self.current_col + 1) % 2
             if self.current_col == 0:
                 self.current_row += 1
             
-            # Track the chart
-            self.chart_grid.append(chart_container)
+        # Track the chart
+        self.chart_grid.append(chart_container)
+        
+        # Update canvas scroll region
+        self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all"))
+# Enhance the base chart creation to support better interactivity
+    def create_base_chart(self, chart_type, width=10, height=7):
+        """Create a base chart with interactive features"""
+        fig = plt.Figure(figsize=(width, height), dpi=100, facecolor='white')
+        fig.canvas.mpl_connect('scroll_event', self.on_figure_scroll)
+        fig.canvas.mpl_connect('button_press_event', self.on_figure_press)
+        fig.canvas.mpl_connect('motion_notify_event', self.on_figure_motion)
+        fig.canvas.mpl_connect('button_release_event', self.on_figure_release)
+        return fig
+
+    # Event handlers for figure interaction
+    def on_figure_scroll(self, event):
+        """Handle scroll events on figures"""
+        if event.inaxes:
+            ax = event.inaxes
+            xdata, ydata = event.xdata, event.ydata
             
-            # Update canvas scroll region
-            self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all"))
+            # Get current x and y limits
+            xlim = ax.get_xlim()
+            ylim = ax.get_ylim()
             
-        except Exception as e:
-            messagebox.showerror("Error", f"Visualization failed: {str(e)}")
-            chart_container.destroy()
+            # Calculate zoom factor
+            scale_factor = 1.1 if event.button == 'up' else 1/1.1
+            
+            # Set new limits
+            ax.set_xlim([xdata - (xdata - xlim[0]) / scale_factor,
+                        xdata + (xlim[1] - xdata) / scale_factor])
+            ax.set_ylim([ydata - (ydata - ylim[0]) / scale_factor,
+                        ydata + (ylim[1] - ydata) / scale_factor])
+            
+            # Redraw
+            ax.figure.canvas.draw_idle()
+
+    # Store pan information
+    pan_start_x = None
+    pan_start_y = None
+    pan_axes = None
+
+    def on_figure_press(self, event):
+        """Handle mouse press events for panning"""
+        if event.button == 2:  # Middle mouse button
+            self.pan_start_x = event.xdata
+            self.pan_start_y = event.ydata
+            self.pan_axes = event.inaxes
+
+    def on_figure_motion(self, event):
+        """Handle mouse motion events for panning"""
+        if hasattr(self, 'pan_start_x') and self.pan_start_x is not None:
+            if event.inaxes == self.pan_axes and event.button == 2:
+                dx = event.xdata - self.pan_start_x
+                dy = event.ydata - self.pan_start_y
+                
+                # Get current axis limits
+                xlim = self.pan_axes.get_xlim()
+                ylim = self.pan_axes.get_ylim()
+                
+                # Set new limits
+                self.pan_axes.set_xlim([xlim[0] - dx, xlim[1] - dx])
+                self.pan_axes.set_ylim([ylim[0] - dy, ylim[1] - dy])
+                
+                # Redraw
+                self.pan_axes.figure.canvas.draw_idle()
+
+    def on_figure_release(self, event):
+        """Handle mouse release events to end panning"""
+        self.pan_start_x = None
+        self.pan_start_y = None
+        self.pan_axes = None
+    # Add these methods to handle fit to screen and reset zoom
+    def fit_chart_to_screen(self, chart_container):
+        """Fit the chart to screen size"""
+        # Find the matplotlib canvas in the chart container
+        for child in chart_container.winfo_children():
+            if isinstance(child, FigureCanvasTkAgg):
+                # Reset the view limits to default
+                fig = child.figure
+                for ax in fig.axes:
+                    ax.autoscale(True)
+                    ax.relim()
+                    ax.autoscale_view()
+                child.draw_idle()
+                break
+
+    def reset_chart_zoom(self, chart_container):
+        """Reset chart zoom to original view"""
+        self.fit_chart_to_screen(chart_container)
 
     def remove_chart(self, chart_container):
         """Remove a specific chart from the grid"""
@@ -1666,6 +1812,15 @@ class Dashboard:
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
 
+        # Add a fit button to the chart container
+        fit_btn = ttk.Button(parent, text="Fit", 
+                        command=lambda: self.fit_chart_to_screen(parent))
+        fit_btn.pack(side="top", anchor="e")
+        
+        canvas = FigureCanvasTkAgg(fig, master=parent)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+
     @error_handler
     def create_time_series_plot(self, parent):
         fig = plt.Figure(figsize=(12, 6), dpi=100, facecolor='white')
@@ -1713,6 +1868,14 @@ class Dashboard:
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        # Add a fit button to the chart container
+        fit_btn = ttk.Button(parent, text="Fit", 
+                        command=lambda: self.fit_chart_to_screen(parent))
+        fit_btn.pack(side="top", anchor="e")
+        
+        canvas = FigureCanvasTkAgg(fig, master=parent)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
 
     @error_handler
     def create_distribution_plot(self, parent):
@@ -1748,6 +1911,14 @@ class Dashboard:
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        # Add a fit button to the chart container
+        fit_btn = ttk.Button(parent, text="Fit", 
+                        command=lambda: self.fit_chart_to_screen(parent))
+        fit_btn.pack(side="top", anchor="e")
+        
+        canvas = FigureCanvasTkAgg(fig, master=parent)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
 
     @error_handler
     def create_correlation_plot(self, parent):
@@ -1777,6 +1948,15 @@ class Dashboard:
         plt.setp(ax.get_yticklabels(), rotation=0, color='black')
         
         fig.tight_layout()
+        
+        canvas = FigureCanvasTkAgg(fig, master=parent)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Add a fit button to the chart container
+        fit_btn = ttk.Button(parent, text="Fit", 
+                        command=lambda: self.fit_chart_to_screen(parent))
+        fit_btn.pack(side="top", anchor="e")
         
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
@@ -1824,6 +2004,14 @@ class Dashboard:
         ax.set_yticklabels(labels, color='black')
         
         fig.tight_layout()
+        
+        canvas = FigureCanvasTkAgg(fig, master=parent)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        # Add a fit button to the chart container
+        fit_btn = ttk.Button(parent, text="Fit", 
+                        command=lambda: self.fit_chart_to_screen(parent))
+        fit_btn.pack(side="top", anchor="e")
         
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
@@ -1917,7 +2105,33 @@ class Dashboard:
         ttk.Button(selection_window, text="Create Chart", 
                 command=create_stacked_chart, 
                 style='success.TButton').pack(pady=10)
-
+        # Add a fit button to the chart container
+        fit_btn = ttk.Button(parent, text="Fit", 
+                        command=lambda: self.fit_chart_to_screen(parent))
+        fit_btn.pack(side="top", anchor="e")
+        
+        canvas = FigureCanvasTkAgg(fig, master=parent)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+#######
+    def on_canvas_configure(self, event):
+        """Configure canvas window size and update charts on resize"""
+        # Resize the window
+        self.viz_canvas.itemconfig(self.canvas_window, width=event.width)
+        
+        # Resize all charts to fit new dimensions
+        if hasattr(self, 'chart_grid') and self.chart_grid:
+            for chart_container in self.chart_grid:
+                width = event.width / 2 - 20  # Adjust for 2-column layout with padding
+                
+                # Find the canvas widget in each chart container
+                for child in chart_container.winfo_children():
+                    if isinstance(child, FigureCanvasTkAgg):
+                        # Resize the figure to match new dimensions
+                        fig = child.figure
+                        fig.set_size_inches(width / fig.get_dpi(), 
+                                        width / fig.get_dpi() * 0.75)  # Maintain aspect ratio
+                        child.draw_idle()        
     # Export and utility methods
     @error_handler
     def export_csv_with_labels(self):
