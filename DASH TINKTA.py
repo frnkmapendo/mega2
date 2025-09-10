@@ -449,10 +449,37 @@ class Dashboard:
             padding=(5, 2)
         )
         self.status_bar.pack(side="bottom", fill="x")   
-        
+
     def on_frame_configure(self, event):
         """Update the scrollable region based on the size of the charts frame"""
         self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all"))
+    def add_chart_placeholder(self):
+        """Add a placeholder message when no charts are available"""
+        if hasattr(self, 'chart_placeholder') and self.chart_placeholder:
+            return
+
+        self.chart_placeholder = ttk.Frame(self.charts_frame)
+        self.chart_placeholder.grid(row=0, column=0, columnspan=2, padx=20, pady=20, sticky="nsew")
+        
+        # Create placeholder content
+        placeholder_label = ttk.Label(
+            self.chart_placeholder,
+            text="No visualizations yet",
+            font=('Helvetica', 14, 'bold')
+        )
+        placeholder_label.pack(pady=(30, 10))
+        
+        instruction_label = ttk.Label(
+            self.chart_placeholder,
+            text="Select a variable and chart type above, then click 'Add Chart' to create visualizations",
+            wraplength=400
+        )
+        instruction_label.pack(pady=10)
+        
+        # Add an example icon or image
+        example_frame = ttk.Frame(self.chart_placeholder, style='info.TFrame')
+        example_frame.pack(pady=20, padx=50, fill="x")
+        ttk.Label(example_frame, text="📊", font=('Arial', 36)).pack(pady=20)
 
     @error_handler        
     def setup_ui(self):
