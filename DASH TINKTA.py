@@ -449,6 +449,10 @@ class Dashboard:
             padding=(5, 2)
         )
         self.status_bar.pack(side="bottom", fill="x")   
+        
+    def on_frame_configure(self, event):
+        """Update the scrollable region based on the size of the charts frame"""
+        self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all"))
 
     @error_handler        
     def setup_ui(self):
