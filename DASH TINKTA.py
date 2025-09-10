@@ -2033,10 +2033,11 @@ class Dashboard:
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
 
     @error_handler
-    def create_horizontal_bar_chart(self, parent, column):
+    def create_horizontal_bar_chart(self, parent, column, modern_style=False):
         fig = plt.Figure(figsize=(12, 8), dpi=100, facecolor='white')
         ax = fig.add_subplot(111)
         ax.set_facecolor('white')
+        
         
         column_label = self.get_column_label(column)
         value_counts = self.filtered_df[column].value_counts()
@@ -2088,7 +2089,7 @@ class Dashboard:
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
 
     @error_handler
-    def create_stacked_bar_chart(self, parent, column):
+    def create_stacked_bar_chart(self, parent, column, modern_style=False):
         if len(self.filtered_df.columns) < 2:
             messagebox.showwarning("Warning", "Need at least two columns for a stacked bar chart")
             return
@@ -2736,6 +2737,6 @@ def main():
     # Add these modern dashboard styles
     style.configure('light.TFrame', background='white')
     style.configure('secondary.TButton', background='#6c757d', foreground='white')
-    
+
 if __name__ == "__main__":
     main()
