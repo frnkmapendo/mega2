@@ -453,33 +453,36 @@ class Dashboard:
     def on_frame_configure(self, event):
         """Update the scrollable region based on the size of the charts frame"""
         self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all"))
+
     def add_chart_placeholder(self):
         """Add a placeholder message when no charts are available"""
         if hasattr(self, 'chart_placeholder') and self.chart_placeholder:
             return
 
-        self.chart_placeholder = ttk.Frame(self.charts_frame)
+        self.chart_placeholder = ttk.Frame(self.charts_frame, style='light.TFrame')
         self.chart_placeholder.grid(row=0, column=0, columnspan=2, padx=20, pady=20, sticky="nsew")
         
-        # Create placeholder content
-        placeholder_label = ttk.Label(
-            self.chart_placeholder,
-            text="No visualizations yet",
-            font=('Helvetica', 14, 'bold')
-        )
-        placeholder_label.pack(pady=(30, 10))
+        # Create placeholder content with modern styling
+        placeholder_frame = ttk.Frame(self.chart_placeholder, padding=20)
+        placeholder_frame.pack(expand=True, fill="both", padx=30, pady=30)
         
-        instruction_label = ttk.Label(
-            self.chart_placeholder,
-            text="Select a variable and chart type above, then click 'Add Chart' to create visualizations",
-            wraplength=400
-        )
-        instruction_label.pack(pady=10)
+        # Add an icon
+        ttk.Label(placeholder_frame, text="📊", font=('Arial', 48), foreground="#17a2b8").pack(pady=(20, 10))
         
-        # Add an example icon or image
-        example_frame = ttk.Frame(self.chart_placeholder, style='info.TFrame')
-        example_frame.pack(pady=20, padx=50, fill="x")
-        ttk.Label(example_frame, text="📊", font=('Arial', 36)).pack(pady=20)
+        # Add title and instruction with modern typography
+        ttk.Label(
+            placeholder_frame,
+            text="Your Dashboard Visualizations",
+            font=('Helvetica', 16, 'bold'),
+            foreground="#212529"
+        ).pack(pady=(10, 5))
+        
+        ttk.Label(
+            placeholder_frame,
+            text="Select a variable and chart type above, then click 'Add Chart'",
+            wraplength=400,
+            foreground="#6c757d"
+        ).pack(pady=5)
 
     @error_handler        
     def setup_ui(self):
@@ -801,7 +804,7 @@ class Dashboard:
         tree_frame.grid_columnconfigure(0, weight=1)
 
     def setup_visualization_tab(self):
-        """Set up the visualization tab with controls and chart display area"""
+        """Set up the visualization tab with modern dashboard styling"""
         # Create visualization frame as a notebook tab
         viz_frame = ttk.Frame(self.notebook)
         self.notebook.add(viz_frame, text="Visualizations")
@@ -810,23 +813,36 @@ class Dashboard:
         main_layout = ttk.Frame(viz_frame)
         main_layout.pack(fill="both", expand=True)
         
-        # Top row - Control panel and summary stats
-        top_row = ttk.Frame(main_layout)
+        # Top row - Control panel and summary stats with modern styling
+        top_row = ttk.Frame(main_layout, style='light.TFrame')
         top_row.pack(fill="x", padx=5, pady=5)
         
-        # Controls
+        # Controls with modern styling
         controls_frame = ttk.LabelFrame(top_row, text="Visualization Controls", padding=10)
         controls_frame.pack(fill="x", side="left", expand=True)
-
+        
         # Add controls
         self.setup_visualization_controls(controls_frame)
-
-        # Summary stats frame
-        self.stats_frame = ttk.Frame(top_row)
-        self.stats_frame.pack(fill="x", side="right", padx=5)
+        
+        # Summary stats frame with card-like appearance
+        stats_container = ttk.Frame(top_row, style='light.TFrame', padding=5)
+        stats_container.pack(fill="x", side="right", padx=5)
+        
+        stats_label = ttk.Label(
+            stats_container, 
+            text="Dashboard Statistics",
+            font=('Helvetica', 11, 'bold')
+        )
+        stats_label.pack(anchor="w", padx=5, pady=(0, 5))
+        
+        self.stats_frame = ttk.Frame(stats_container)
+        self.stats_frame.pack(fill="x")
         
         # Initialize summary stats
         self.create_summary_stats()
+        
+        # Create modern scrollable canvas for charts
+        self.setup_charts_canvas(main_layout)
 
         # Create scrollable canvas for charts
         self.setup_charts_canvas(main_layout)
@@ -877,9 +893,12 @@ class Dashboard:
                 style='danger.TButton').pack(side="left", padx=5) 
 
     def setup_charts_canvas(self, parent):
-        """Set up the scrollable canvas for charts with zoom support"""
+        """Set up the scrollable canvas for charts with modern styling"""
         canvas_frame = ttk.Frame(parent)
         canvas_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Use a more dashboard-like background color
+        self.viz_canvas = tk.Canvas(canvas_frame, bg='#f0f2f5') 
         
         self.viz_canvas = tk.Canvas(canvas_frame, bg='#2b2b2b')
         scrollbar_y = ttk.Scrollbar(canvas_frame, orient="vertical", 
@@ -975,7 +994,7 @@ class Dashboard:
 
     # Modify the add_visualization method to add zoom controls
     def add_visualization(self):
-        """Add a new chart to the visualization grid with zoom functionality"""
+        """Add a new chart to the visualization grid with modern card styling"""
         if self.filtered_df is None or self.filtered_df.empty:
             messagebox.showwarning("Warning", "No data available for visualization")
             return
@@ -993,59 +1012,71 @@ class Dashboard:
             self.chart_placeholder.destroy()
             self.chart_placeholder = None
         
-        # Create frame for the new chart
-        chart_container = ttk.LabelFrame(self.charts_frame, 
-                                        text=f"{chart_type}: {display_column}", 
-                                        padding=10)
+        # Create a modern card container for the chart
+        # Use a white background frame with subtle shadow effect
+        chart_container = ttk.Frame(self.charts_frame)
         
         # Add to grid
         chart_container.grid(row=self.current_row, column=self.current_col,
-                            padx=5, pady=5, sticky="nsew")
+                            padx=10, pady=10, sticky="nsew")
         
-        # Create button frame
-        btn_frame = ttk.Frame(chart_container)
-        btn_frame.pack(side="top", fill="x")
+        # Create inner content frame (white card with padding)
+        inner_frame = ttk.Frame(chart_container, style='light.TFrame', padding=10)
+        inner_frame.pack(fill="both", expand=True)
         
-        # Add fit to screen button
-        fit_btn = ttk.Button(btn_frame, text="🔍 Fit", width=6,
-                            command=lambda: self.fit_chart_to_screen(chart_container))
-        fit_btn.pack(side="right", padx=2, pady=2)
+        # Add header with title and controls
+        header_frame = ttk.Frame(inner_frame)
+        header_frame.pack(fill="x", padx=5, pady=(0, 10))
         
-        # Add reset zoom button
-        reset_btn = ttk.Button(btn_frame, text="⟲ Reset", width=6,
-                            command=lambda: self.reset_chart_zoom(chart_container))
-        reset_btn.pack(side="right", padx=2, pady=2)
+        # Chart title
+        title_text = f"{chart_type}: {display_column}" if display_column else chart_type
+        ttk.Label(
+            header_frame, 
+            text=title_text,
+            style='primary.TLabel',
+            font=('Helvetica', 11, 'bold')
+        ).pack(side="left")
         
-        # Add close button
-        close_btn = ttk.Button(btn_frame, text="×", width=3,
-                            command=lambda: self.remove_chart(chart_container))
-        close_btn.pack(side="right", padx=2, pady=2)
+        # Control buttons
+        btn_frame = ttk.Frame(header_frame)
+        btn_frame.pack(side="right")
+        
+        # Add modern styled control buttons
+        ttk.Button(btn_frame, text="⟲", width=3, style='secondary.TButton',
+                command=lambda: self.reset_chart_zoom(inner_frame)).pack(side="right", padx=1)
+        
+        ttk.Button(btn_frame, text="×", width=3, style='danger.TButton',
+                command=lambda: self.remove_chart(chart_container)).pack(side="right", padx=1)
+        
+        # Content area for the actual chart
+        chart_frame = ttk.Frame(inner_frame)
+        chart_frame.pack(fill="both", expand=True)
         
         try:
-            # Create the visualization
+            # Create the visualization in the chart_frame
             if chart_type == "Time Series":
-                self.create_time_series_plot(chart_container)
+                self.create_time_series_plot(chart_frame, modern_style=True)
             elif chart_type == "Distribution":
-                self.create_distribution_plot(chart_container)
+                self.create_distribution_plot(chart_frame, modern_style=True)
             elif chart_type == "Correlation":
-                self.create_correlation_plot(chart_container)
+                self.create_correlation_plot(chart_frame, modern_style=True)
             elif chart_type == "Pie Chart":
-                self.create_pie_chart(chart_container, column)
+                self.create_pie_chart(chart_frame, column, modern_style=True)
             elif chart_type == "Horizontal Bar":
-                self.create_horizontal_bar_chart(chart_container, column)
+                self.create_horizontal_bar_chart(chart_frame, column, modern_style=True)
             elif chart_type == "Stacked Bar":
-                self.create_stacked_bar_chart(chart_container, column)
+                self.create_stacked_bar_chart(chart_frame, column, modern_style=True)
         except Exception as e:
             logger.error(f"Failed to create {chart_type} chart: {e}")
             messagebox.showerror("Chart Error", f"Failed to create chart: {str(e)}")
             chart_container.destroy()
             return
-            
-            # Update grid position
-            self.current_col = (self.current_col + 1) % 2
-            if self.current_col == 0:
-                self.current_row += 1
-            
+        
+        # Update grid position (for next chart)
+        self.current_col = (self.current_col + 1) % 2
+        if self.current_col == 0:
+            self.current_row += 1
+        
         # Track the chart
         self.chart_grid.append(chart_container)
         
@@ -1792,7 +1823,7 @@ class Dashboard:
 
     # Chart creation methods
     @error_handler
-    def create_pie_chart(self, parent, column):
+    def create_pie_chart(self, parent, column, modern_style=False):
         # Create a figure with dynamic size
         fig = plt.Figure(figsize=(10, 7), dpi=100, facecolor='white')
         ax = fig.add_subplot(111)
@@ -1801,56 +1832,64 @@ class Dashboard:
         # Get human-readable label for the column
         column_label = self.get_column_label(column)
         
+        # Chart data processing...
         value_counts = self.filtered_df[column].value_counts()
-        mapped_counts = pd.Series(dtype=int)
+        # ... (rest of your data processing)
         
-        for value, count in value_counts.items():
-            choice_label = self.get_choice_label(column, value)
-            if " (" in choice_label and choice_label.endswith(")"):
-                display_label = choice_label.split(" (")[0]
-            else:
-                display_label = choice_label
-            mapped_counts[display_label] = mapped_counts.get(display_label, 0) + count
+        # Modern styling enhancements
+        if modern_style:
+            # Use a more modern color palette
+            colors = plt.cm.tab10(np.linspace(0, 1, len(value_counts)))
+            # Adjust text sizes and fonts
+            plt.rcParams['font.family'] = 'Arial'
+            title_fontsize = 14
+            label_fontsize = 10
+        else:
+            # Your existing styling
+            colors = plt.cm.Pastel1(np.linspace(0, 1, len(value_counts)))
+            title_fontsize = 12
+            label_fontsize = 9
         
-        value_counts = mapped_counts
+        # Create the pie chart
+        patches, texts, autotexts = ax.pie(
+            value_counts, 
+            labels=value_counts.index if not modern_style else None,  # For modern style, use legend instead
+            autopct='%1.1f%%', 
+            startangle=90,
+            colors=colors,
+            wedgeprops={'edgecolor': 'white', 'linewidth': 1} if modern_style else {}
+        )
         
-        if len(value_counts) > 10:
-            other_count = value_counts[10:].sum()
-            value_counts = value_counts[:10]
-            value_counts['Others'] = other_count
+        if modern_style:
+            plt.setp(autotexts, size=11, weight="bold", color='white')
+            # Use legend instead of labels directly on pie for cleaner look
+            ax.legend(
+                patches, 
+                value_counts.index, 
+                title="Categories",
+                loc="center left", 
+                bbox_to_anchor=(1.0, 0.5),
+                fontsize=label_fontsize
+            )
+        else:
+            plt.setp(autotexts, size=9, weight="bold", color='black')
+            plt.setp(texts, size=9, color='black')
         
-        colors = plt.cm.Pastel1(np.linspace(0, 1, len(value_counts)))
-        patches, texts, autotexts = ax.pie(value_counts, labels=value_counts.index, 
-                                        autopct='%1.1f%%', startangle=90,
-                                        colors=colors)
-        
-        plt.setp(autotexts, size=9, weight="bold", color='black')
-        plt.setp(texts, size=9, color='black')
-        
-        ax.set_title(f'Distribution of {column_label}', color='black', pad=20, fontsize=12)
-        
-        if len(value_counts) > 5:
-            legend = ax.legend(patches, value_counts.index, 
-                            title="Categories",
-                            loc="center left", 
-                            bbox_to_anchor=(1.05, 0.5))
-            legend.get_title().set_color('black')
-            plt.setp(legend.get_texts(), color='black')
+        # Chart title
+        ax.set_title(
+            f'Distribution of {column_label}', 
+            color='#303030' if modern_style else 'black', 
+            pad=20, 
+            fontsize=title_fontsize,
+            fontweight='bold' if modern_style else 'normal'
+        )
         
         fig.tight_layout()
         
+        # Create the Matplotlib canvas
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Add a fit button to the chart container
-        fit_btn = ttk.Button(parent, text="Fit", 
-                        command=lambda: self.fit_chart_to_screen(parent))
-        fit_btn.pack(side="top", anchor="e")
-        
-        canvas = FigureCanvasTkAgg(fig, master=parent)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        canvas.get_tk_widget().pack(fill="both", expand=True)
 
     @error_handler
     def create_time_series_plot(self, parent):
@@ -2694,6 +2733,9 @@ def main():
         except:
             print(error_msg)
         raise
-
+    # Add these modern dashboard styles
+    style.configure('light.TFrame', background='white')
+    style.configure('secondary.TButton', background='#6c757d', foreground='white')
+    
 if __name__ == "__main__":
     main()
