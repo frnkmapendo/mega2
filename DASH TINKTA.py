@@ -803,8 +803,8 @@ class Dashboard:
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 ############
-    def add_visualization(self):
-        """Add a chart to the card grid, with modern styling and responsive layout."""
+    def setup_visualization_tab(self):
+        """Set up the visualization tab with a single flexible frame for controls/stats and charts (cards)"""
         # Create visualization frame as a notebook tab
         viz_frame = ttk.Frame(self.notebook)
         self.notebook.add(viz_frame, text="Visualizations")
@@ -989,17 +989,9 @@ class Dashboard:
 
     # Modify the add_visualization method to add zoom controls
     def add_visualization(self):
-        """Add a new chart to the visualization grid with modern card styling"""
+        """Add a new chart with better spacing and responsiveness"""
         if self.filtered_df is None or self.filtered_df.empty:
             messagebox.showwarning("Warning", "No data available for visualization")
-            return
-        
-        chart_type = self.chart_type_var.get()
-        display_column = self.selected_column_var.get()
-        column = self.extract_column_name_from_display(display_column) if display_column else ""
-        
-        if not column and chart_type not in ["Correlation", "Time Series"]:
-            messagebox.showwarning("Warning", "Please select a column to visualize")
             return
         
         # Remove placeholder if it exists
@@ -1007,23 +999,38 @@ class Dashboard:
             self.chart_placeholder.destroy()
             self.chart_placeholder = None
         
-        # Create a more compact chart container
-        chart_container = ttk.Frame(self.charts_frame)
+        # Create chart container with better spacing
+        chart_container = ttk.Frame(self.charts_frame, padding=10)
         
-        # Add to grid with appropriate padding
-        chart_container.grid(row=self.current_row, column=self.current_col,
-                        padx=5, pady=5, sticky="nsew")
+        # Improved grid layout with better spacing
+        row = self.current_row
+        col = self.current_col
         
-        # Create inner content frame with minimal padding
-        inner_frame = ttk.Frame(chart_container, style='light.TFrame', padding=5)
-        inner_frame.pack(fill="both", expand=True)
+        chart_container.grid(
+            row=row, 
+            column=col,
+            padx=15,  # Increased horizontal padding
+            pady=15,  # Increased vertical padding
+            sticky="nsew",
+            ipadx=5,  # Internal padding
+            ipady=5
+        )
         
+        # Configure grid weights for responsiveness
+        self.charts_frame.grid_rowconfigure(row, weight=1)
+        self.charts_frame.grid_columnconfigure(col, weight=1)
+        
+        # Create inner frame with responsive sizing
+        inner_frame = ttk.Frame(chart_container, style='light.TFrame')
+        inner_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
         # Add minimal header with title and controls
         header_frame = ttk.Frame(inner_frame)
         header_frame.pack(fill="x", padx=2, pady=(0, 2))
         
-        # Chart title (shortened)
-        title_text = f"{chart_type}: {display_column}" if display_column else chart_type
+        # Get chart title from selected column
+        column_label = self.get_column_label(column)
+        title_text = f"{self.chart_type_var.get()}: {column_label}"
         if len(title_text) > 30:
             title_text = title_text[:27] + "..."
         
@@ -1160,7 +1167,14 @@ class Dashboard:
                     ax.autoscale_view()
                 child.draw_idle()
                 break
-
+    def create_responsive_figure(self, parent_width, parent_height):
+        """Create figure with responsive sizing"""
+        # Calculate figure size based on container
+        fig_width = max(6, min(12, parent_width / 100))
+        fig_height = max(4, min(8, parent_height / 100))
+        
+        fig = plt.Figure(figsize=(fig_width, fig_height), dpi=100, facecolor='white')
+        return fig
     def reset_chart_zoom(self, chart_container):
         """Reset chart zoom to original view"""
         self.fit_chart_to_screen(chart_container)
@@ -1173,24 +1187,39 @@ class Dashboard:
         self.reorganize_grid()
 
     def reorganize_grid(self):
-        """Reorganize remaining charts in the grid"""
+        """Enhanced grid reorganization with better spacing"""
         if not self.chart_grid:
             self.current_row = 0
             self.current_col = 0
             self.add_chart_placeholder()
             return
         
-        # Reposition all remaining charts
+        # Reposition charts with improved spacing
+        cols_per_row = 3
         for i, chart in enumerate(self.chart_grid):
-            row = i // 2
-            col = i % 2
-            chart.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+            row = i // cols_per_row
+            col = i % cols_per_row
+            
+            chart.grid(
+                row=row, 
+                column=col, 
+                padx=15,  # Increased padding
+                pady=15, 
+                sticky="nsew",
+                ipadx=5,
+                ipady=5
+            )
+            
+            # Configure grid weights
+            self.charts_frame.grid_rowconfigure(row, weight=1)
+            self.charts_frame.grid_columnconfigure(col, weight=1)
         
-        self.current_row = (len(self.chart_grid) - 1) // 2
-        self.current_col = len(self.chart_grid) % 2
+        # Update current position
+        self.current_row = (len(self.chart_grid) - 1) // cols_per_row
+        self.current_col = len(self.chart_grid) % cols_per_row
         
         # Update canvas scroll region
-        self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all"))
+        self.root.after_idle(lambda: self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all")))
 
     def clear_all_charts(self):
         """Remove all charts from the visualization area"""
@@ -1820,8 +1849,16 @@ class Dashboard:
     # Chart creation methods
     @error_handler
     def create_pie_chart(self, parent, column, modern_style=False):
-        # Create a smaller figure with appropriate size
-        fig = plt.Figure(figsize=(5, 4), dpi=100, facecolor='white')
+        # Get parent dimensions for responsive sizing
+        parent.update_idletasks()
+        parent_width = parent.winfo_width() or 400
+        parent_height = parent.winfo_height() or 300
+        
+        # Create responsive figure
+        fig_width = max(4, min(8, parent_width / 80))
+        fig_height = max(3, min(6, parent_height / 80))
+        
+        fig = plt.Figure(figsize=(fig_width, fig_height), dpi=100, facecolor='white')
         ax = fig.add_subplot(111)
         ax.set_facecolor('white')
         
@@ -1880,16 +1917,24 @@ class Dashboard:
             fontweight='bold' if modern_style else 'normal'
         )
         
-        fig.tight_layout()
+        # Better layout with more padding
+        fig.tight_layout(pad=2.0)  # Increased padding
         
-        # Create the Matplotlib canvas
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=2, pady=2)
-
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+        #######
     @error_handler
     def create_time_series_plot(self, parent, modern_style=False):
-        fig = plt.Figure(figsize=(5, 4), dpi=100, facecolor='white')
+        parent.update_idletasks()
+        parent_width = parent.winfo_width() or 400
+        parent_height = parent.winfo_height() or 300
+        
+        # Create responsive figure
+        fig_width = max(4, min(8, parent_width / 80))
+        fig_height = max(3, min(6, parent_height / 80))
+        
+        fig = plt.Figure(figsize=(fig_width, fig_height), dpi=100, facecolor='white')
         ax = fig.add_subplot(111)
         ax.set_facecolor('white')
         
@@ -1939,9 +1984,11 @@ class Dashboard:
                         command=lambda: self.fit_chart_to_screen(parent))
         fit_btn.pack(side="top", anchor="e")
         
+        fig.tight_layout(pad=2.0)  # Increased padding
+        
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
 
     @error_handler
     def create_distribution_plot(self, parent, modern_style=False):
@@ -1972,11 +2019,11 @@ class Dashboard:
             for spine in ax.spines.values():
                 spine.set_color('black')
         
-        fig.tight_layout()
+        fig.tight_layout(pad=2.0)  # Increased padding
         
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
         # Add a fit button to the chart container
         fit_btn = ttk.Button(parent, text="Fit", 
                         command=lambda: self.fit_chart_to_screen(parent))
@@ -2013,11 +2060,11 @@ class Dashboard:
         plt.setp(ax.get_xticklabels(), rotation=45, ha='right', color='black')
         plt.setp(ax.get_yticklabels(), rotation=0, color='black')
         
-        fig.tight_layout()
+        fig.tight_layout(pad=2.0)  # Increased padding
         
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
 
         # Add a fit button to the chart container
         fit_btn = ttk.Button(parent, text="Fit", 
@@ -2026,7 +2073,7 @@ class Dashboard:
         
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
 
     @error_handler
     def create_horizontal_bar_chart(self, parent, column, modern_style=False):
@@ -2080,9 +2127,11 @@ class Dashboard:
                         command=lambda: self.fit_chart_to_screen(parent))
         fit_btn.pack(side="top", anchor="e")
         
+        fig.tight_layout(pad=2.0)  # Increased padding
+        
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=2, pady=2)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
 
     @error_handler
     def create_stacked_bar_chart(self, parent, column, modern_style=False):
@@ -2182,23 +2231,43 @@ class Dashboard:
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
 #######
     def on_canvas_configure(self, event):
-        """Configure canvas window size and update charts on resize"""
-        # Resize the window
-        self.viz_canvas.itemconfig(self.canvas_window, width=event.width)
+        """Enhanced canvas configuration with responsive chart resizing"""
+        # Update canvas scroll region
+        self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all"))
         
-        # Resize all charts to fit new dimensions
+        # Calculate responsive dimensions
+        canvas_width = event.width
+        canvas_height = event.height
+        
+        # Resize the charts frame window
+        self.viz_canvas.itemconfig(self.canvas_window, width=canvas_width)
+        
+        # Update chart sizes responsively
         if hasattr(self, 'chart_grid') and self.chart_grid:
+            # Calculate optimal chart dimensions based on grid
+            cols_per_row = 3
+            chart_width = (canvas_width - (cols_per_row + 1) * 30) / cols_per_row  # Account for padding
+            chart_height = chart_width * 0.75  # Maintain aspect ratio
+            
             for chart_container in self.chart_grid:
-                width = event.width / 3 - 15  # Adjust for 3-column layout with padding
-                
-                # Find the canvas widget in each chart container
-                for child in chart_container.winfo_children():
-                    if isinstance(child, FigureCanvasTkAgg):
-                        # Resize the figure to match new dimensions
-                        fig = child.figure
-                        fig.set_size_inches(width / fig.get_dpi(), 
-                                        width / fig.get_dpi() * 0.75)  # Maintain aspect ratio
-                        child.draw_idle()       
+                self.resize_chart_container(chart_container, chart_width, chart_height) 
+
+    def resize_chart_container(self, container, width, height):
+        """Resize individual chart containers"""
+        try:
+            # Find matplotlib canvas in container
+            for widget in container.winfo_children():
+                if hasattr(widget, 'winfo_children'):
+                    for child in widget.winfo_children():
+                        if isinstance(child, FigureCanvasTkAgg):
+                            # Resize the figure
+                            fig = child.figure
+                            fig.set_size_inches(width/fig.dpi, height/fig.dpi)
+                            child.draw_idle()
+                            break
+        except Exception as e:
+            logger.error(f"Error resizing chart container: {e}")                
+
     # Export and utility methods
     @error_handler
     def export_csv_with_labels(self):
