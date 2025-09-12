@@ -802,71 +802,67 @@ class Dashboard:
         # Configure grid weights
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
-
-    def setup_visualization_tab(self):
-        """Set up the visualization tab with modern dashboard styling"""
+############
+    def add_visualization(self):
+        """Add a chart to the card grid, with modern styling and responsive layout."""
         # Create visualization frame as a notebook tab
         viz_frame = ttk.Frame(self.notebook)
         self.notebook.add(viz_frame, text="Visualizations")
-        
-        # Main vertical layout
-        main_layout = ttk.Frame(viz_frame)
-        main_layout.pack(fill="both", expand=True)
-        
-        # Top row - Control panel and summary stats with modern styling
-        top_row = ttk.Frame(main_layout, style='light.TFrame')
-        top_row.pack(fill="x", padx=5, pady=5)
-        
-        # Controls with modern styling
-        controls_frame = ttk.LabelFrame(top_row, text="Visualization Controls", padding=10)
-        controls_frame.pack(fill="x", side="left", expand=True)
-        
-        # Add controls
-        self.setup_visualization_controls(controls_frame)
-        
-        # Summary stats frame with card-like appearance
-        stats_container = ttk.Frame(top_row, style='light.TFrame', padding=5)
-        stats_container.pack(fill="x", side="right", padx=5)
-        
-        stats_label = ttk.Label(
-            stats_container, 
-            text="Dashboard Statistics",
-            font=('Helvetica', 11, 'bold')
-        )
-        stats_label.pack(anchor="w", padx=5, pady=(0, 5))
-        
-        self.stats_frame = ttk.Frame(stats_container)
-        self.stats_frame.pack(fill="x")
-        
-        # Initialize summary stats
-        self.create_summary_stats()
-        
-        # Create modern scrollable canvas for charts
-        self.setup_charts_canvas(main_layout)
 
-        # Create scrollable canvas for charts
-        self.setup_charts_canvas(main_layout)
-        
-        # Create grid frame for charts
+        # Main vertical layout
+        main_frame = ttk.Frame(viz_frame)
+        main_frame.pack(fill="both", expand=True)
+
+        # Top: Controls and Stats in a single flexible horizontal frame
+        controls_stats_frame = ttk.Frame(main_frame)
+        controls_stats_frame.pack(fill="x", padx=5, pady=5)
+
+        # Controls (left side)
+        controls_frame = ttk.LabelFrame(controls_stats_frame, text="Visualization Controls", padding=10)
+        controls_frame.pack(side="left", fill="x", expand=True)
+        self.setup_visualization_controls(controls_frame)
+
+        # Stats (right side)
+        stats_frame = ttk.LabelFrame(controls_stats_frame, text="Dashboard Statistics", padding=10)
+        stats_frame.pack(side="left", fill="x")
+        self.stats_frame = ttk.Frame(stats_frame)
+        self.stats_frame.pack(fill="x")
+        self.create_summary_stats()
+
+        # Charts: single flexible frame below controls_stats_frame
+        charts_canvas_frame = ttk.Frame(main_frame)
+        charts_canvas_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Scrollable canvas for charts
+        self.viz_canvas = tk.Canvas(charts_canvas_frame, bg='#2b2b2b')
+        scrollbar_y = ttk.Scrollbar(charts_canvas_frame, orient="vertical", command=self.viz_canvas.yview)
+        scrollbar_x = ttk.Scrollbar(charts_canvas_frame, orient="horizontal", command=self.viz_canvas.xview)
+        self.viz_canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
+        self.viz_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar_y.pack(side="right", fill="y")
+        scrollbar_x.pack(side="bottom", fill="x")
+
+        # Chart cards frame (inside canvas)
         self.charts_frame = ttk.Frame(self.viz_canvas)
-        self.canvas_window = self.viz_canvas.create_window(
-            (0, 0),
-            window=self.charts_frame,
-            anchor="nw",
-            tags=("win",)
-        )
-        
-        # Configure grid layout
+        self.canvas_window = self.viz_canvas.create_window((0, 0), window=self.charts_frame, anchor="nw", tags=("win",))
         self.charts_frame.grid_columnconfigure(0, weight=1)
         self.charts_frame.grid_columnconfigure(1, weight=1)
-        
-        self.charts_frame.bind('<Configure>', lambda e: self.viz_canvas.configure(scrollregion=self.viz_canvas.bbox("all")))
+        self.charts_frame.grid_columnconfigure(2, weight=1)
+        self.charts_frame.bind('<Configure>', self.on_frame_configure)
         self.viz_canvas.bind('<Configure>', self.on_canvas_configure)
-        
+
         # Initialize chart tracking
         self.chart_grid = []
         self.current_row = 0
         self.current_col = 0
+
+        # Add placeholder if no charts
+        self.add_chart_placeholder()
+        # Bind zoom/pan as before
+        self.viz_canvas.bind("<MouseWheel>", self.on_mousewheel)
+        self.viz_canvas.bind("<Button-2>", self.start_pan)
+        self.viz_canvas.bind("<B2-Motion>", self.pan_canvas)
+########
 
     def setup_visualization_controls(self, controls_frame):
         """Set up the visualization control buttons and dropdowns"""
