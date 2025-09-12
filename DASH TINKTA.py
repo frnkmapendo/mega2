@@ -898,8 +898,6 @@ class Dashboard:
         canvas_frame.pack(fill="both", expand=True, padx=5, pady=5)
         
         # Use a more dashboard-like background color
-        self.viz_canvas = tk.Canvas(canvas_frame, bg='#f0f2f5') 
-        
         self.viz_canvas = tk.Canvas(canvas_frame, bg='#2b2b2b')
         scrollbar_y = ttk.Scrollbar(canvas_frame, orient="vertical", 
                                 command=self.viz_canvas.yview)
@@ -920,9 +918,10 @@ class Dashboard:
             tags=("win",)
         )
         
-        # Configure grid layout
+        # Configure grid layout - change to 3 columns
         self.charts_frame.grid_columnconfigure(0, weight=1)
         self.charts_frame.grid_columnconfigure(1, weight=1)
+        self.charts_frame.grid_columnconfigure(2, weight=1)
         
         self.charts_frame.bind('<Configure>', self.on_frame_configure)
         self.viz_canvas.bind('<Configure>', self.on_canvas_configure)
@@ -1012,48 +1011,49 @@ class Dashboard:
             self.chart_placeholder.destroy()
             self.chart_placeholder = None
         
-        # Create a modern card container for the chart
-        # Use a white background frame with subtle shadow effect
+        # Create a more compact chart container
         chart_container = ttk.Frame(self.charts_frame)
         
-        # Add to grid
+        # Add to grid with appropriate padding
         chart_container.grid(row=self.current_row, column=self.current_col,
-                            padx=10, pady=10, sticky="nsew")
+                        padx=5, pady=5, sticky="nsew")
         
-        # Create inner content frame (white card with padding)
-        inner_frame = ttk.Frame(chart_container, style='light.TFrame', padding=10)
+        # Create inner content frame with minimal padding
+        inner_frame = ttk.Frame(chart_container, style='light.TFrame', padding=5)
         inner_frame.pack(fill="both", expand=True)
         
-        # Add header with title and controls
+        # Add minimal header with title and controls
         header_frame = ttk.Frame(inner_frame)
-        header_frame.pack(fill="x", padx=5, pady=(0, 10))
+        header_frame.pack(fill="x", padx=2, pady=(0, 2))
         
-        # Chart title
+        # Chart title (shortened)
         title_text = f"{chart_type}: {display_column}" if display_column else chart_type
+        if len(title_text) > 30:
+            title_text = title_text[:27] + "..."
+        
         ttk.Label(
             header_frame, 
             text=title_text,
-            style='primary.TLabel',
-            font=('Helvetica', 11, 'bold')
+            font=('Helvetica', 9, 'bold')
         ).pack(side="left")
         
-        # Control buttons
+        # Control buttons - more compact
         btn_frame = ttk.Frame(header_frame)
         btn_frame.pack(side="right")
         
-        # Add modern styled control buttons
-        ttk.Button(btn_frame, text="⟲", width=3, style='secondary.TButton',
+        # Add smaller control buttons
+        ttk.Button(btn_frame, text="⟲", width=2, style='secondary.TButton',
                 command=lambda: self.reset_chart_zoom(inner_frame)).pack(side="right", padx=1)
         
-        ttk.Button(btn_frame, text="×", width=3, style='danger.TButton',
+        ttk.Button(btn_frame, text="×", width=2, style='danger.TButton',
                 command=lambda: self.remove_chart(chart_container)).pack(side="right", padx=1)
         
-        # Content area for the actual chart
+        # Content area for the actual chart (smaller)
         chart_frame = ttk.Frame(inner_frame)
         chart_frame.pack(fill="both", expand=True)
         
         try:
-            # Create the visualization in the chart_frame
+            # Create the visualization in the chart_frame - pass modern_style parameter
             if chart_type == "Time Series":
                 self.create_time_series_plot(chart_frame, modern_style=True)
             elif chart_type == "Distribution":
@@ -1073,7 +1073,7 @@ class Dashboard:
             return
         
         # Update grid position (for next chart)
-        self.current_col = (self.current_col + 1) % 2
+        self.current_col = (self.current_col + 1) % 3  # Changed from 2 to 3 columns
         if self.current_col == 0:
             self.current_row += 1
         
@@ -1824,17 +1824,17 @@ class Dashboard:
     # Chart creation methods
     @error_handler
     def create_pie_chart(self, parent, column, modern_style=False):
-        # Create a figure with dynamic size
-        fig = plt.Figure(figsize=(10, 7), dpi=100, facecolor='white')
+        # Create a smaller figure with appropriate size
+        fig = plt.Figure(figsize=(5, 4), dpi=100, facecolor='white')
         ax = fig.add_subplot(111)
         ax.set_facecolor('white')
         
+
         # Get human-readable label for the column
         column_label = self.get_column_label(column)
         
         # Chart data processing...
         value_counts = self.filtered_df[column].value_counts()
-        # ... (rest of your data processing)
         
         # Modern styling enhancements
         if modern_style:
@@ -1889,11 +1889,11 @@ class Dashboard:
         # Create the Matplotlib canvas
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=2, pady=2)
 
     @error_handler
-    def create_time_series_plot(self, parent):
-        fig = plt.Figure(figsize=(12, 6), dpi=100, facecolor='white')
+    def create_time_series_plot(self, parent, modern_style=False):
+        fig = plt.Figure(figsize=(5, 4), dpi=100, facecolor='white')
         ax = fig.add_subplot(111)
         ax.set_facecolor('white')
         
@@ -1948,14 +1948,14 @@ class Dashboard:
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
 
     @error_handler
-    def create_distribution_plot(self, parent):
+    def create_distribution_plot(self, parent, modern_style=False):
         numeric_cols = self.filtered_df.select_dtypes(include=['number']).columns
         
         if len(numeric_cols) == 0:
             messagebox.showinfo("Info", "No numeric columns available for distribution plot")
             return
         
-        fig = plt.Figure(figsize=(12, 8), dpi=100, facecolor='white')
+        fig = plt.Figure(figsize=(5, 4), dpi=100, facecolor='white')
         
         n_cols = min(2, len(numeric_cols))
         n_rows = (len(numeric_cols) + 1) // 2
@@ -2034,7 +2034,8 @@ class Dashboard:
 
     @error_handler
     def create_horizontal_bar_chart(self, parent, column, modern_style=False):
-        fig = plt.Figure(figsize=(12, 8), dpi=100, facecolor='white')
+        # Create a smaller figure with appropriate size
+        fig = plt.Figure(figsize=(5, 4), dpi=100, facecolor='white')
         ax = fig.add_subplot(111)
         ax.set_facecolor('white')
         
@@ -2076,9 +2077,8 @@ class Dashboard:
         
         fig.tight_layout()
         
-        canvas = FigureCanvasTkAgg(fig, master=parent)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+
+        ######addd if possible
         # Add a fit button to the chart container
         fit_btn = ttk.Button(parent, text="Fit", 
                         command=lambda: self.fit_chart_to_screen(parent))
@@ -2086,7 +2086,7 @@ class Dashboard:
         
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=2, pady=2)
 
     @error_handler
     def create_stacked_bar_chart(self, parent, column, modern_style=False):
@@ -2193,7 +2193,7 @@ class Dashboard:
         # Resize all charts to fit new dimensions
         if hasattr(self, 'chart_grid') and self.chart_grid:
             for chart_container in self.chart_grid:
-                width = event.width / 2 - 20  # Adjust for 2-column layout with padding
+                width = event.width / 3 - 15  # Adjust for 3-column layout with padding
                 
                 # Find the canvas widget in each chart container
                 for child in chart_container.winfo_children():
@@ -2202,7 +2202,7 @@ class Dashboard:
                         fig = child.figure
                         fig.set_size_inches(width / fig.get_dpi(), 
                                         width / fig.get_dpi() * 0.75)  # Maintain aspect ratio
-                        child.draw_idle()        
+                        child.draw_idle()       
     # Export and utility methods
     @error_handler
     def export_csv_with_labels(self):
